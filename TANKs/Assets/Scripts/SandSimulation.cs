@@ -201,6 +201,113 @@ public class SandSimulation : MonoBehaviour
         }
         UpdateMesh();
     }
+    // 🚨 🪐 [ฟังก์ชัน SmoothSand ฉบับกระจายโหลดแบบ Blur Filter คำนวณสมบูรณ์แบบ]
+    public void SmoothSand(Vector3 hitPoint, float brushRadius, float smoothSpeed)
+    {
+        WakeUpSimulation();
+
+        WaterSystem waterSys = GetComponent<WaterSystem>();
+        if (waterSys != null) waterSys.WakeUpSimulation();
+
+        // 1. ดึงความสูง ณ ปัจจุบันของทุกพิกเซลเก็บไว้เป็นต้นแบบอ้างอิงชั่วคราว (Snapshot)
+        float[] tempHeights = new float[mainVertexCount];
+        for (int i = 0; i < mainVertexCount; i++)
+        {
+            tempHeights[i] = sandColumns[i].GetTotalHeight();
+        }
+
+        bool hasChanged = false;
+
+        // 2. เริ่มลูปคำนวณสมานความสูงเฉลี่ยในวงแปรงพู่กัน
+        for (int z = 0; z < gridZCount; z++)
+        {
+            for (int x = 0; x < gridXCount; x++)
+            {
+                int currentIndex = z * gridXCount + x;
+                if (currentIndex >= mainVertexCount) continue;
+
+                Vector3 worldPt = transform.TransformPoint(currentVertices[currentIndex]);
+                float distance = Vector2.Distance(new Vector2(worldPt.x, worldPt.z), new Vector2(hitPoint.x, hitPoint.z));
+
+                if (distance < brushRadius)
+                {
+                    float falloff = 1f - (distance / brushRadius);
+
+                    // อัลกอริทึมเก็บค่าผลรวมความสูงและนับจำนวนเซลล์รอบข้าง 4 ทิศทาง (Cross Blur Filter)
+                    float sumHeight = 0f;
+                    int neighborCount = 0;
+
+                    if (x > 0) { sumHeight += tempHeights[currentIndex - 1]; neighborCount++; }
+                    if (x < gridXCount - 1) { sumHeight += tempHeights[currentIndex + 1]; neighborCount++; }
+                    if (z > 0) { sumHeight += tempHeights[currentIndex - gridXCount]; neighborCount++; }
+                    if (z < gridZCount - 1) { sumHeight += tempHeights[currentIndex + gridXCount]; neighborCount++; }
+
+                    if (neighborCount > 0)
+                    {
+                        float targetAverageHeight = sumHeight / neighborCount;
+                        float currentHeight = tempHeights[currentIndex];
+                        float heightDifference = targetAverageHeight - currentHeight;
+
+                        // เพิ่มกำลังแรงเกลี่ยคูณตาม Falloff (ตรงกลางบรัชจะสมูทไวกว่าขอบ)
+                        float smoothAmount = heightDifference * smoothSpeed * falloff * Time.deltaTime;
+
+                        if (Mathf.Abs(smoothAmount) > 0.00001f)
+                        {
+                            var column = sandColumns[currentIndex];
+
+                            if (smoothAmount > 0f)
+                            {
+                                // คอลัมน์ต่ำกว่ารอบข้าง -> ดึงเนื้อทรายมาถมเพิ่มให้สูงเท่าเพื่อน
+                                if (column.layers.Count > 0)
+                                {
+                                    var topLayer = column.layers[column.layers.Count - 1];
+                                    topLayer.thickness += smoothAmount;
+                                    column.layers[column.layers.Count - 1] = topLayer;
+                                }
+                                else
+                                {
+                                    int fallbackTypeIndex = 0;
+                                    ToolManager toolManager = FindFirstObjectByType<ToolManager>();
+                                    if (toolManager != null)
+                                    {
+                                        fallbackTypeIndex = toolManager.selectedSandTypeIndex;
+                                    }
+
+                                    column.layers.Add(new SandLayer { sandTypeIndex = fallbackTypeIndex, thickness = smoothAmount });
+                                }
+                            }
+                            else
+                            {
+                                // คอลัมน์สูงโด่งแหลมกว่ารอบข้าง -> ปาดความหนาทรายส่วนเกินออก
+                                if (column.layers.Count > 0)
+                                {
+                                    var topLayer = column.layers[column.layers.Count - 1];
+                                    float absAmount = Mathf.Abs(smoothAmount);
+
+                                    if (topLayer.thickness > absAmount)
+                                    {
+                                        topLayer.thickness -= absAmount;
+                                        column.layers[column.layers.Count - 1] = topLayer;
+                                    }
+                                    else
+                                    {
+                                        column.layers.RemoveAt(column.layers.Count - 1);
+                                    }
+                                }
+                            }
+                            hasChanged = true;
+                        }
+                    }
+                }
+            }
+        } // <-- สิ้นสุดลูปแกน Z และแกน X ทั้งหมดอย่างสมบูรณ์ตรงนี้
+
+        // 🚨 🪐 [ย้ายมาจุดนี้] สั่ง UpdateMesh รวบยอด "ครั้งเดียวอยู่นอกลูปทั้งหมด" ของเฟรม
+        if (hasChanged)
+        {
+            UpdateMesh();
+        }
+    }
 
     private bool ApplyAvalancheEffect(float simDeltaTime)
     {
@@ -297,6 +404,13 @@ public class SandSimulation : MonoBehaviour
             }
         }
 
+        // 🚨 🪐 [ดักแทรกปลุกพ่วงระบบน้ำข้างๆ] เมื่อมีทรายไหลถล่ม 
+        if (meshChanged)
+        {
+            WaterSystem waterSys = GetComponent<WaterSystem>();
+            if (waterSys != null) waterSys.WakeUpSimulation();
+        }
+
         return meshChanged;
     }
 
@@ -338,8 +452,6 @@ public class SandSimulation : MonoBehaviour
         }
     }
 
-    // 🚨 🪐 [ฟังก์ชันดั้งเดิมที่กู้ชีพกลับมาแล้ว] 
-    // ตัวส่งค่าความสูงของพิกเซลทรายกลับไปให้ระบบพู่กัน ToolManager และขอบน้ำใช้คำนวณ 3D Snap
     public float GetHeightAtWorldPos(Vector3 worldPos)
     {
         Vector3 localPos = transform.InverseTransformPoint(worldPos);
