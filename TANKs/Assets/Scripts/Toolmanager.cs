@@ -8,7 +8,7 @@ public class ToolManager : MonoBehaviour
     [Header("Tool Status")]
     public CurrentTool activeTool = CurrentTool.None;
 
-    [Header("⏳ Sand Brush Settings (เททราย)")]
+    [Header("⏳ Sand Brush Settings")]
     public float sandBrushRadius = 0.05f;
     public float sandMinRadius = 0.02f;
     public float sandMaxRadius = 0.2f;
@@ -17,7 +17,7 @@ public class ToolManager : MonoBehaviour
     public float pourSpeed = 3.0f;
     public float vacuumSpeed = 3.0f;
 
-    [Header("🌊 Water Brush Settings (เทน้ำ)")]
+    [Header("🌊 Water Brush Settings")]
     public float waterBrushRadius = 0.15f;
     public float waterMinRadius = 0.05f;
     public float waterMaxRadius = 0.6f;
@@ -26,18 +26,14 @@ public class ToolManager : MonoBehaviour
     public float waterPourSpeed = 1.5f;
     public float waterVacuumSpeed = 1.5f;
 
-    // 🚨 🪐 [เพิ่มและปรับค่าความแรงเกลี่ยทรายใหม่ให้สูงขึ้น]
-    [Header("✨ Smooth Brush Settings (เกลี่ยหน้าดิน)")]
+    [Header("✨ Smooth Brush Settings")]
     public float smoothBrushRadius = 0.08f;
     public float smoothMinRadius = 0.02f;
     public float smoothMaxRadius = 0.3f;
     public float smoothSizeStep = 0.01f;
-    [Tooltip("ความแรงในการเกลี่ย (ยิ่งเยอะเนื้อทรายยิ่งยุบราบไว) *ต้องใช้เลขเยอะๆ ถึงจะเห็นผล*")]
-    // 🚨 ปรับจาก 2.0 เป็น 100.0 เพื่อให้เห็นผลทันที!!! (สามารถปรับลดได้ใน Inspector)
     public float smoothStrength = 100.0f;
 
     [Header("Sand Settings")]
-    [Tooltip("เลข ID ชนิดทรายที่จะเท (0 = ทรายมาตรฐาน)")]
     public int selectedSandTypeIndex = 0;
 
     [Header("Simulation References")]
@@ -48,15 +44,17 @@ public class ToolManager : MonoBehaviour
     public LayerMask sandLayer;
     public LayerMask waterLayer;
 
-    [Header("Visual Indicator (วงกลมพู่กัน)")]
+    [Header("Visual Indicator")]
     public Color indicatorColor = Color.cyan;
     public float indicatorLineWidth = 0.005f;
 
     [Header("📦 Physical Dust Settings")]
-    [Tooltip("ลาก Prefab เม็ดทรายที่มี Rigidbody มาใส่ช่องนี้")]
     public GameObject sandDustPrefab;
-    [Tooltip("ความหนาแน่นในการเสกต่อเฟรม (ยิ่งเยอะเม็ดทรายยิ่งพูนสะใจ)")]
     public int spawnDensityPerFrame = 3;
+
+    [Header("💧 Water Droplet Settings")]
+    public GameObject waterDropletPrefab;
+    public int waterDropsPerFrame = 2;
 
     private LineRenderer brushIndicator;
     private int circleSegments = 36;
@@ -70,8 +68,11 @@ public class ToolManager : MonoBehaviour
     {
         if (activeTool != CurrentTool.None && Mouse.current != null)
         {
+            // 🚨 🪐 [อัปเกรด: เช็คว่ากดปุ่ม ALT ค้างไว้ด้วยหรือไม่ ถึงจะให้ปรับขนาดแปรง]
+            bool isAltPressed = Keyboard.current.altKey.isPressed;
             float scrollY = Mouse.current.scroll.ReadValue().y;
-            if (Mathf.Abs(scrollY) > 0.01f)
+
+            if (isAltPressed && Mathf.Abs(scrollY) > 0.01f)
             {
                 if (activeTool == CurrentTool.Sand)
                 {
@@ -104,7 +105,6 @@ public class ToolManager : MonoBehaviour
                     Vector3 localPos = waterSystem.transform.InverseTransformPoint(hit.point);
                     localPos.y = localY;
                     interactivePoint = waterSystem.transform.TransformPoint(localPos);
-
                     currentActiveRadius = waterBrushRadius;
                 }
                 else if (activeTool == CurrentTool.Sand && sandSimulation != null)
@@ -113,7 +113,6 @@ public class ToolManager : MonoBehaviour
                     Vector3 localPos = sandSimulation.transform.InverseTransformPoint(hit.point);
                     localPos.y = localY;
                     interactivePoint = sandSimulation.transform.TransformPoint(localPos);
-
                     currentActiveRadius = sandBrushRadius;
                 }
                 else if (activeTool == CurrentTool.Smooth && sandSimulation != null)
@@ -122,7 +121,6 @@ public class ToolManager : MonoBehaviour
                     Vector3 localPos = sandSimulation.transform.InverseTransformPoint(hit.point);
                     localPos.y = localY;
                     interactivePoint = sandSimulation.transform.TransformPoint(localPos);
-
                     currentActiveRadius = smoothBrushRadius;
                 }
 
@@ -142,17 +140,31 @@ public class ToolManager : MonoBehaviour
                             interactivePoint.y + 0.08f,
                             interactivePoint.z + randomCircle.y
                         );
-
                         GameObject dust = Instantiate(sandDustPrefab, spawnPos, Quaternion.identity);
-
                         Rigidbody rb = dust.GetComponent<Rigidbody>();
-                        if (rb != null)
-                        {
-                            rb.linearVelocity = new Vector3(Random.Range(-0.1f, 0.1f), -1f, Random.Range(-0.1f, 0.1f));
-                        }
+                        if (rb != null) rb.linearVelocity = new Vector3(Random.Range(-0.1f, 0.1f), -1f, Random.Range(-0.1f, 0.1f));
                     }
                 }
 
+                if (isLeftPressed && activeTool == CurrentTool.Water && waterDropletPrefab != null)
+                {
+                    for (int i = 0; i < waterDropsPerFrame; i++)
+                    {
+                        Vector2 randomCircle = Random.insideUnitCircle * currentActiveRadius;
+                        Vector3 spawnPos = new Vector3(
+                            interactivePoint.x + randomCircle.x,
+                            interactivePoint.y + -0.05f,
+                            interactivePoint.z + randomCircle.y
+                        );
+                        GameObject drop = Instantiate(waterDropletPrefab, spawnPos, Quaternion.identity);
+                        DropletController dropletCtrl = drop.GetComponent<DropletController>();
+                        if (dropletCtrl != null) dropletCtrl.waterSystem = waterSystem;
+                        Rigidbody rb = drop.GetComponent<Rigidbody>();
+                        if (rb != null) rb.linearVelocity = new Vector3(Random.Range(-0.5f, 0.5f), -2f, Random.Range(-0.5f, 0.5f));
+                    }
+                }
+
+                // 🚨 🪐 --- [ระบบคำนวณหลัก] ---
                 if (isLeftPressed)
                 {
                     if (activeTool == CurrentTool.Sand && sandSimulation != null)
@@ -162,10 +174,18 @@ public class ToolManager : MonoBehaviour
                     else if (activeTool == CurrentTool.Water && waterSystem != null)
                     {
                         waterSystem.PourWater(interactivePoint, currentActiveRadius, waterPourSpeed);
+
+                        // 🚨 🪐 ส่งข้อมูลปริมาตรน้ำที่เท ไปให้สมองกลาง (Parent) บันทึกค่า
+                        TankWaterQuality tank = waterSystem.GetComponentInParent<TankWaterQuality>();
+                        if (tank != null)
+                        {
+                            // V = (1/3) * PI * r^2 * h
+                            float volumeM3 = (Mathf.PI * currentActiveRadius * currentActiveRadius * waterPourSpeed * Time.deltaTime) / 3f;
+                            tank.AddWater(volumeM3);
+                        }
                     }
                     else if (activeTool == CurrentTool.Smooth && sandSimulation != null)
                     {
-                        // 🚨 🪐 [แก้ไขจุดนี้] ส่งค่า `smoothStrength` (100.0) แทนค่าเดิม
                         sandSimulation.SmoothSand(interactivePoint, currentActiveRadius, smoothStrength);
                     }
                 }
@@ -178,6 +198,14 @@ public class ToolManager : MonoBehaviour
                     else if (activeTool == CurrentTool.Water && waterSystem != null)
                     {
                         waterSystem.VacuumWater(interactivePoint, currentActiveRadius, waterVacuumSpeed);
+
+                        // 🚨 🪐 ส่งข้อมูลแจ้งสมองกลางว่ามีการดูดน้ำออก
+                        TankWaterQuality tank = waterSystem.GetComponentInParent<TankWaterQuality>();
+                        if (tank != null)
+                        {
+                            float volumeM3 = (Mathf.PI * currentActiveRadius * currentActiveRadius * waterVacuumSpeed * Time.deltaTime) / 3f;
+                            tank.RemoveWater(volumeM3);
+                        }
                     }
                 }
                 return;
@@ -190,19 +218,13 @@ public class ToolManager : MonoBehaviour
     private void SetupBrushIndicator()
     {
         brushIndicator = gameObject.GetComponent<LineRenderer>();
-        if (brushIndicator == null)
-        {
-            brushIndicator = gameObject.AddComponent<LineRenderer>();
-        }
+        if (brushIndicator == null) brushIndicator = gameObject.AddComponent<LineRenderer>();
 
         brushIndicator.positionCount = circleSegments + 1;
         brushIndicator.useWorldSpace = true;
         brushIndicator.startWidth = indicatorLineWidth;
         brushIndicator.endWidth = indicatorLineWidth;
-
-        Material whiteDiffuseMat = new Material(Shader.Find("Sprites/Default"));
-        brushIndicator.material = whiteDiffuseMat;
-
+        brushIndicator.material = new Material(Shader.Find("Sprites/Default"));
         brushIndicator.startColor = indicatorColor;
         brushIndicator.endColor = indicatorColor;
         brushIndicator.enabled = false;
@@ -218,7 +240,6 @@ public class ToolManager : MonoBehaviour
             Vector3 worldPoint = new Vector3(center.x + x, center.y, center.z + z);
 
             float exactY = center.y;
-
             if ((activeTool == CurrentTool.Sand || activeTool == CurrentTool.Smooth) && sandSimulation != null)
             {
                 float localY = sandSimulation.GetHeightAtWorldPos(worldPoint);
