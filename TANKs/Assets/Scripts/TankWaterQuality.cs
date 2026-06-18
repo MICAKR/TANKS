@@ -55,13 +55,6 @@ public class TankWaterQuality : MonoBehaviour
     [Tooltip("สีของน้ำตอนที่ของเสีย/ไนโตรเจนเป็นพิษจัดๆ")]
     public Color toxicWaterColor = new Color(0.2f, 0.5f, 0.2f);
 
-    [Header("👻 ตั้งค่าความโปร่งใส (Alpha Controls)")]
-    [Tooltip("ความโปร่งใสตอนน้ำใสปิ๊ง (0 = ล่องหน, 1 = ทึบแสง)")]
-    [Range(0f, 1f)] public float minAlpha = 0.4f;
-
-    [Tooltip("ความโปร่งใสตอนน้ำขุ่นสุด หรือตอนเป็นพิษจัด")]
-    [Range(0f, 1f)] public float maxAlpha = 0.95f;
-
     [Space(10)]
     [Tooltip("ชื่อ Property สีใน Shader ของคุณ")]
     public string shaderColorPropertyName = "_WaterTint";
@@ -111,7 +104,6 @@ public class TankWaterQuality : MonoBehaviour
         if (tickTimer >= simulationInterval)
         {
             UpdatePhysicalVolumes();
-            // 🚨 🪐 เดินเวลาตามปกติ
             ProcessEcosystemStep(simulationInterval * timeMultiplier);
             UpdateWaterVisuals();
             tickTimer = 0f;
@@ -168,9 +160,6 @@ public class TankWaterQuality : MonoBehaviour
     public float nitrogen = 0f;
     public float bacteriaEfficiency = 0.2f;
 
-    /// <summary>
-    /// 🚨 🪐 แยกแกนสมองกลออกมา เพื่อให้รองรับทั้งการรันปกติ และการรันแบบ Fast-Forward
-    /// </summary>
     private void ProcessEcosystemStep(float simDeltaTime)
     {
         if (waterVolumeLiters <= 0f)
@@ -255,6 +244,7 @@ public class TankWaterQuality : MonoBehaviour
 
         float turbidityRatio = turbidity / 100f;
 
+        // ผสมเฉพาะสี RGB ไปส่งให้ Shader
         Color targetColor = Color.Lerp(clearWaterColor, murkyWaterColor, turbidityRatio);
 
         if (nitrogen > 0f)
@@ -263,39 +253,17 @@ public class TankWaterQuality : MonoBehaviour
             targetColor = Color.Lerp(targetColor, toxicWaterColor, toxicRatio);
         }
 
-        float targetAlpha = Mathf.Lerp(minAlpha, maxAlpha, turbidityRatio);
-
-        if (nitrogen > 0f)
-        {
-            float toxicRatio = Mathf.Clamp01(nitrogen / 20f);
-            float toxicAlpha = Mathf.Lerp(minAlpha, maxAlpha, toxicRatio);
-            targetAlpha = Mathf.Max(targetAlpha, toxicAlpha);
-        }
-
-        targetColor.a = targetAlpha;
-
         if (waterMaterial.HasProperty(shaderColorPropertyName))
         {
             waterMaterial.SetColor(shaderColorPropertyName, targetColor);
         }
     }
 
-    // =========================================================================
-    // 🛠️ PUBLIC FUNCTIONS (รวมถึงระบบ Time Skip)
-    // =========================================================================
-
-    /// <summary>
-    /// 🚨 🪐 ฟังก์ชันเรียกใช้งานตอนตัวละคร "เข้านอน" หรือกดข้ามวัน
-    /// ใส่จำนวนชั่วโมงที่ผ่านไปเข้าไป เช่น 8.0f สำหรับการนอน 8 ชั่วโมง
-    /// </summary>
     public void PassTime(float hoursToSkip)
     {
         if (hoursToSkip <= 0f) return;
 
-        // แปลงชั่วโมงเป็นวินาที
         float totalSeconds = hoursToSkip * 3600f;
-
-        // หั่นการคำนวณทีละ 60 วินาที เพื่อรักษาสมดุลของสูตร (ไม่ก้าวข้ามเฟสต่างๆ เร็วเกินไป)
         float timeSlice = 60f;
         int steps = Mathf.CeilToInt(totalSeconds / timeSlice);
         float remainingTime = totalSeconds;
@@ -307,7 +275,6 @@ public class TankWaterQuality : MonoBehaviour
             remainingTime -= stepCurrent;
         }
 
-        // อัปเดตสีตู้อีกครั้งหลังตื่นนอน
         UpdateWaterVisuals();
         Debug.Log($"<color=#f1c40f><b>[TankWaterQuality]</b> ข้ามเวลาไป {hoursToSkip} ชั่วโมง ระบบนิเวศอัปเดตเรียบร้อย!</color>");
     }
