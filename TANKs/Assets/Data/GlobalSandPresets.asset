@@ -14,7 +14,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::SandDatabase
   simulationInterval: 0.045
   maxHeight: 1
-  baseDefaultColor: {r: 0.79622644, g: 0.67383784, b: 0.4972659, a: 1}
+  baseDefaultColor: {r: 0.3886792, g: 0.3231692, b: 0.228074, a: 1}
   drySpeed: 0.1
   wetDarknessMultiplier: 0.3
   sandTypes:
