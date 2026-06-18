@@ -1,0 +1,35 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 51910b602a76dfc449f58773789968c0, type: 3}
+  m_Name: GlobalSandPresets
+  m_EditorClassIdentifier: Assembly-CSharp::SandDatabase
+  simulationInterval: 0.045
+  maxHeight: 1
+  baseDefaultColor: {r: 0.79622644, g: 0.67383784, b: 0.4972659, a: 1}
+  drySpeed: 0.1
+  wetDarknessMultiplier: 0.3
+  sandTypes:
+  - sandName: White Sand
+    maxSlopeAngle: 0.3
+    flowRate: 20
+    sandColor: {r: 0.85660374, g: 0.75294167, b: 0.66427195, a: 1}
+    staticFriction: 0.005
+  - sandName: Blue Sand
+    maxSlopeAngle: 0.35
+    flowRate: 18
+    sandColor: {r: 0, g: 0, b: 1, a: 1}
+    staticFriction: 0.006
+  - sandName: Heavy Mud
+    maxSlopeAngle: 0.6
+    flowRate: 8
+    sandColor: {r: 0, g: 0, b: 0, a: 1}
+    staticFriction: 0.015

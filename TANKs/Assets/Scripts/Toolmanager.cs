@@ -3,73 +3,141 @@ using UnityEngine.InputSystem;
 
 public class ToolManager : MonoBehaviour
 {
-    public enum CurrentTool { None, PourSand, VacuumSand }
+    public enum CurrentTool { None, Sand, Water }
 
     [Header("Tool Status")]
     public CurrentTool activeTool = CurrentTool.None;
 
-    [Header("Brush Settings")]
-    public float brushRadius = 0.1f; // แนะนำ 0.05 - 0.2 สำหรับตู้ 20 นิ้ว
+    // 🚨 🪐 [ปรับปรุงใหญ่] แยกขนาดวงพู่กันรายชิ้นเพื่อให้จูนสเกลการเทแยกกันได้อย่างอิสระ
+    [Header("⏳ Sand Brush Settings")]
+    public float sandBrushRadius = 0.05f;
+    public float sandMinRadius = 0.02f;
+    public float sandMaxRadius = 0.2f;
+    public float sandSizeStep = 0.01f;
+    [Space(5)]
     public float pourSpeed = 3.0f;
     public float vacuumSpeed = 3.0f;
 
+    [Header("🌊 Water Brush Settings")]
+    public float waterBrushRadius = 0.15f; // ตั้งค่าเริ่มต้นให้น้ำวงใหญ่กว่าทรายแต่แรกได้เลย
+    public float waterMinRadius = 0.05f;
+    public float waterMaxRadius = 0.6f;    // ขยาย Max ให้สาดน้ำได้สะใจเต็มตู้ปลา
+    public float waterSizeStep = 0.02f;   // ลูกกลิ้งเมาส์ขยับไซส์ไวกว่าทรายเพื่อความลื่นไหล
+    [Space(5)]
+    public float waterPourSpeed = 1.5f;
+    public float waterVacuumSpeed = 1.5f;
+
     [Header("Sand Settings")]
-    public Color[] sandColors;
-    public int selectedColorIndex = 0;
+    [Tooltip("เลข ID ชนิดทรายที่จะเท (0 = ทรายมาตรฐาน, 1 = โคลนหนืด อิงตามพรีเซ็ตใน SandSimulation)")]
+    public int selectedSandTypeIndex = 0;
+
+    [Header("Simulation References")]
+    public SandSimulation sandSimulation;
+    public WaterSystem waterSystem;
+
+    [Header("Layer Settings")]
+    public LayerMask sandLayer;
+    public LayerMask waterLayer;
 
     [Header("Visual Indicator (วงกลมพู่กัน)")]
-    public Color indicatorColor = Color.cyan; // สีของเส้นพู่กัน
-    public float indicatorLineWidth = 0.005f; // ความหนาของเส้น
+    public Color indicatorColor = Color.cyan;
+    public float indicatorLineWidth = 0.005f;
 
     private LineRenderer brushIndicator;
-    private int circleSegments = 36; // ความเนียนของวงกลม (จำนวนเหลี่ยม)
+    private int circleSegments = 36;
 
     void Start()
     {
-        // สร้างระบบวาดเส้นวงกลมพรีวิวขึ้นมาอัตโนมัติเมื่อเริ่มเกม
         SetupBrushIndicator();
     }
 
     void Update()
     {
-        // 1. ระบบตรวจจับพิกัดเมาส์ตลอดเวลา (เพื่อแสดงวงกลมพรีวิว แม้ไม่ได้กดคลิก)
         if (activeTool != CurrentTool.None && Mouse.current != null)
         {
+            // 🚨 🪐 [ระบบตรวจจับกลิ้งเมาส์แยกบรัช] 
+            // เช็คว่าปัจจุบันถือส้อมเทอะไรอยู่ แล้วแยกสายคณิตศาสตร์ Clamp ตัวแปรของใครของมันชัดเจน
+            float scrollY = Mouse.current.scroll.ReadValue().y;
+            if (Mathf.Abs(scrollY) > 0.01f)
+            {
+                if (activeTool == CurrentTool.Sand)
+                {
+                    sandBrushRadius += Mathf.Sign(scrollY) * sandSizeStep;
+                    sandBrushRadius = Mathf.Clamp(sandBrushRadius, sandMinRadius, sandMaxRadius);
+                }
+                else if (activeTool == CurrentTool.Water)
+                {
+                    waterBrushRadius += Mathf.Sign(scrollY) * waterSizeStep;
+                    waterBrushRadius = Mathf.Clamp(waterBrushRadius, waterMinRadius, waterMaxRadius);
+                }
+            }
+
             Vector2 mousePos = Mouse.current.position.ReadValue();
             Ray ray = Camera.main.ScreenPointToRay(mousePos);
 
-            if (Physics.Raycast(ray, out RaycastHit hit))
+            // ยิงเลเซอร์เจาะลงพื้นทรายก้นตู้เพื่อหาพิกัดราบ XZ ที่เสถียรที่สุด
+            if (Physics.Raycast(ray, out RaycastHit hit, Mathf.Infinity, sandLayer))
             {
-                SandSimulation sandSim = hit.collider.GetComponent<SandSimulation>();
+                Vector3 interactivePoint = hit.point;
+                float currentActiveRadius = 0f; // ตัวแปรพักค่ารัศมีพู่กันเพื่อส่งต่อให้ฟังก์ชันวาดและฟิสิกส์
 
-                if (sandSim != null)
+                // ระบบคำนวณสแนปผิวสามมิติพร้อมคัดเลือกขนาดรัศมีบรัชปัจจุบันมาใช้งาน
+                if (activeTool == CurrentTool.Water && waterSystem != null)
                 {
-                    // แสดงวงกลมและวาดตามขนาดรัศมีพู่กันจริง
-                    brushIndicator.enabled = true;
-                    DrawPreviewCircle(hit.point, brushRadius);
+                    float localY = waterSystem.GetHeightAtWorldPos(hit.point);
+                    Vector3 localPos = waterSystem.transform.InverseTransformPoint(hit.point);
+                    localPos.y = localY;
+                    interactivePoint = waterSystem.transform.TransformPoint(localPos);
 
-                    // 2. ถ้าผู้เล่นกดคลิกซ้ายค้างไว้ ให้เริ่มทำงาน (เท/ดูด ทราย)
-                    if (Mouse.current.leftButton.isPressed)
-                    {
-                        if (activeTool == CurrentTool.PourSand)
-                        {
-                            sandSim.PourSand(hit.point, selectedColorIndex, brushRadius, pourSpeed);
-                        }
-                        else if (activeTool == CurrentTool.VacuumSand)
-                        {
-                            sandSim.VacuumSand(hit.point, brushRadius, vacuumSpeed);
-                        }
-                    }
-                    return;
+                    currentActiveRadius = waterBrushRadius; // ล็อกใช้ค่ารัศมีพู่กันน้ำ
                 }
+                else if (activeTool == CurrentTool.Sand && sandSimulation != null)
+                {
+                    float localY = sandSimulation.GetHeightAtWorldPos(hit.point);
+                    Vector3 localPos = sandSimulation.transform.InverseTransformPoint(hit.point);
+                    localPos.y = localY;
+                    interactivePoint = sandSimulation.transform.TransformPoint(localPos);
+
+                    currentActiveRadius = sandBrushRadius; // ล็อกใช้ค่ารัศมีพู่กันทราย
+                }
+
+                brushIndicator.enabled = true;
+
+                // วาดวงกลมพรีวิวตามขนาดของบรัชชนิดนั้นๆ
+                DrawPreviewCircle(interactivePoint, currentActiveRadius);
+
+                bool isLeftPressed = Mouse.current.leftButton.isPressed;
+                bool isRightPressed = Mouse.current.rightButton.isPressed;
+
+                if (isLeftPressed)
+                {
+                    if (activeTool == CurrentTool.Sand && sandSimulation != null)
+                    {
+                        sandSimulation.PourSand(interactivePoint, selectedSandTypeIndex, currentActiveRadius, pourSpeed);
+                    }
+                    else if (activeTool == CurrentTool.Water && waterSystem != null)
+                    {
+                        waterSystem.PourWater(interactivePoint, currentActiveRadius, waterPourSpeed);
+                    }
+                }
+                else if (isRightPressed)
+                {
+                    if (activeTool == CurrentTool.Sand && sandSimulation != null)
+                    {
+                        sandSimulation.VacuumSand(interactivePoint, currentActiveRadius, vacuumSpeed);
+                    }
+                    else if (activeTool == CurrentTool.Water && waterSystem != null)
+                    {
+                        waterSystem.VacuumWater(interactivePoint, currentActiveRadius, waterVacuumSpeed);
+                    }
+                }
+                return;
             }
         }
 
-        // ถ้าไม่ได้เลือกเครื่องมือ หรือเมาส์หลุดออกจากตู้ปลา ให้ซ่อนวงกลมพรีวิว
         if (brushIndicator != null) brushIndicator.enabled = false;
     }
 
-    // ฟังก์ชันสร้าง LineRenderer อัตโนมัติในสคริปต์
     private void SetupBrushIndicator()
     {
         brushIndicator = gameObject.GetComponent<LineRenderer>();
@@ -83,17 +151,14 @@ public class ToolManager : MonoBehaviour
         brushIndicator.startWidth = indicatorLineWidth;
         brushIndicator.endWidth = indicatorLineWidth;
 
-        // สร้าง Material เปล่าๆ สีขาวเพื่อให้ระบายสีเส้นได้
         Material whiteDiffuseMat = new Material(Shader.Find("Sprites/Default"));
         brushIndicator.material = whiteDiffuseMat;
 
-        // ตั้งค่าสีเส้นพู่กัน
         brushIndicator.startColor = indicatorColor;
         brushIndicator.endColor = indicatorColor;
         brushIndicator.enabled = false;
     }
 
-    // ฟังก์ชันคำนวณคณิตศาสตร์วาดวงกลม 360 องศารอบจุดที่เมาส์ชี้
     private void DrawPreviewCircle(Vector3 center, float radius)
     {
         float angle = 0f;
@@ -101,46 +166,35 @@ public class ToolManager : MonoBehaviour
         {
             float x = Mathf.Cos(Mathf.Deg2Rad * angle) * radius;
             float z = Mathf.Sin(Mathf.Deg2Rad * angle) * radius;
+            Vector3 worldPoint = new Vector3(center.x + x, center.y, center.z + z);
 
-            // วาดให้เส้นลอยเหนือผิวทรายนิดนึง (0.01) เส้นจะได้ไม่จมหายลงไปในเนื้อทราย
-            Vector3 pointPos = new Vector3(center.x + x, center.y + 0.01f, center.z + z);
+            float exactY = center.y;
+
+            if (activeTool == CurrentTool.Sand && sandSimulation != null)
+            {
+                float localY = sandSimulation.GetHeightAtWorldPos(worldPoint);
+                exactY = sandSimulation.transform.TransformPoint(new Vector3(0, localY, 0)).y;
+            }
+            else if (activeTool == CurrentTool.Water && waterSystem != null)
+            {
+                float localY = waterSystem.GetHeightAtWorldPos(worldPoint);
+                exactY = waterSystem.transform.TransformPoint(new Vector3(0, localY, 0)).y;
+            }
+
+            Vector3 pointPos = new Vector3(worldPoint.x, exactY + 0.005f, worldPoint.z);
             brushIndicator.SetPosition(i, pointPos);
-
             angle += (360f / circleSegments);
         }
     }
 
-    public void ClickPourSandTool()
-    {
-        if (activeTool == CurrentTool.PourSand)
-        {
-            activeTool = CurrentTool.None;
-            Debug.Log("ยกเลิกเครื่องมือ: กลับไปเมาส์ปกติ");
-        }
-        else
-        {
-            activeTool = CurrentTool.PourSand;
-            Debug.Log("เปิดเครื่องมือ: เททราย");
-        }
-    }
+    public void ClickSandTool() { activeTool = (activeTool == CurrentTool.Sand) ? CurrentTool.None : CurrentTool.Sand; }
+    public void ClickWaterTool() { activeTool = (activeTool == CurrentTool.Water) ? CurrentTool.None : CurrentTool.Water; }
 
-    public void ClickVacuumSandTool()
+    public void ChangeSandType(int typeIndex)
     {
-        if (activeTool == CurrentTool.VacuumSand)
+        if (sandSimulation != null && sandSimulation.sandDatabase != null && sandSimulation.sandDatabase.sandTypes != null)
         {
-            activeTool = CurrentTool.None;
-            Debug.Log("ยกเลิกเครื่องมือ: กลับไปเมาส์ปกติ");
+            selectedSandTypeIndex = Mathf.Clamp(typeIndex, 0, sandSimulation.sandDatabase.sandTypes.Length - 1);
         }
-        else
-        {
-            activeTool = CurrentTool.VacuumSand;
-            Debug.Log("เปิดเครื่องมือ: ดูดทราย");
-        }
-    }
-
-    public void ChangeSandColor(int colorIndex)
-    {
-        selectedColorIndex = Mathf.Clamp(colorIndex, 0, sandColors.Length - 1);
-        Debug.Log("เปลี่ยนสีทรายเป็น Index: " + selectedColorIndex);
     }
 }

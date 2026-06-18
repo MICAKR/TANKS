@@ -7,7 +7,7 @@ public class SandSimulation : MonoBehaviour
     [System.Serializable]
     public struct SandLayer
     {
-        public int colorIndex;
+        public int sandTypeIndex;       // รหัส ID ชนิดทราย อิงตามดัชนีในคลังข้อมูลกลาง
         public float thickness;
     }
 
@@ -23,19 +23,10 @@ public class SandSimulation : MonoBehaviour
         }
     }
 
-    [Header("Optimization Settings")]
-    public float simulationInterval = 0.03f;
+    [Header("🚨 Shared Database Connecting")]
+    public SandDatabase sandDatabase;
+
     private float tickTimer = 0f;
-
-    [Header("Erosion & Physics Settings")]
-    public float maxSlopeAngle = 0.3f;
-    public float flowRate = 12.0f;
-    public float maxHeight = 1.0f;
-
-    [Header("Sand Visual Colors")]
-    public Color[] sandColors = new Color[] { Color.white, Color.blue, Color.red };
-    public Color baseDefaultColor = new Color(0.8f, 0.8f, 0.8f, 1f);
-
     private Mesh filterMesh;
     private Vector3[] baseVertices;
     private Vector3[] currentVertices;
@@ -47,7 +38,15 @@ public class SandSimulation : MonoBehaviour
 
     private int mainVertexCount;
     private int[] perimeterIndices;
-    private float skirtDepth = -0.05f; // ตัวแปรรับค่าความลึกกำแพง
+    private float skirtDepth = -0.05f;
+
+    private float[] heightSnapshot;
+    private float[] sandMoisture;
+
+    private float maxHeightLimit = 0.4f;
+
+    // ระบบคุมการหลับ/ตื่นฟิสิกส์เพื่อเร่งความเร็วคอม
+    private bool isSimulationSleeping = false;
 
     private readonly int[] dx = { -1, 1, 0, 0, -1, 1, -1, 1 };
     private readonly int[] dz = { 0, 0, -1, 1, -1, -1, 1, 1 };
@@ -58,17 +57,17 @@ public class SandSimulation : MonoBehaviour
         SandGridGenerator generator = GetComponent<SandGridGenerator>();
         if (generator != null)
         {
-            generator.GenerateGrid();
             gridXCount = generator.gridXCount;
             gridZCount = generator.gridZCount;
             currentCellSize = generator.cellSize;
             mainVertexCount = generator.mainVertexCount;
             perimeterIndices = generator.perimeterIndicesArray;
-            skirtDepth = generator.skirtDepth; // อ่านค่าความลึกกำแพงฝังดินมาจาก Generator
+            skirtDepth = generator.skirtDepth;
+            maxHeightLimit = generator.tankHeight;
         }
         else
         {
-            Debug.LogError("[SandSimulation] ไม่พบสคริปต์ SandGridGenerator!");
+            Debug.LogError("[SandSimulation] 不พบสคริปต์ SandGridGenerator!");
             return;
         }
 
@@ -83,20 +82,89 @@ public class SandSimulation : MonoBehaviour
         {
             sandColumns[i] = new SandColumn();
         }
+
+        heightSnapshot = new float[mainVertexCount];
+        sandMoisture = new float[mainVertexCount];
     }
 
     void Update()
     {
-        tickTimer += Time.deltaTime;
-        if (tickTimer >= simulationInterval)
+        if (sandDatabase == null) return;
+
+        // คำนวณการระเหยของน้ำออกจากเนื้อทรายรายเฟรม
+        float activeDrySpeed = sandDatabase.drySpeed;
+        bool isDryingActive = false;
+        for (int i = 0; i < mainVertexCount; i++)
         {
-            ApplyAvalancheEffect(tickTimer);
+            if (sandMoisture[i] > 0f)
+            {
+                sandMoisture[i] -= activeDrySpeed * Time.deltaTime;
+                if (sandMoisture[i] < 0f) sandMoisture[i] = 0f;
+                isDryingActive = true;
+
+                if (isSimulationSleeping) WakeUpSimulation();
+            }
+        }
+
+        if (isSimulationSleeping && !isDryingActive) return;
+
+        tickTimer += Time.deltaTime;
+
+        if (tickTimer >= sandDatabase.simulationInterval)
+        {
+            bool avalancheChanged = ApplyAvalancheEffect(tickTimer);
+
+            if (avalancheChanged || isDryingActive)
+            {
+                UpdateMesh();
+            }
+            else if (!avalancheChanged && !isDryingActive)
+            {
+                GoToSleepSimulation();
+            }
             tickTimer = 0f;
         }
     }
 
-    public void PourSand(Vector3 hitPoint, int colorIndex, float brushRadius, float pourSpeed)
+    private void GoToSleepSimulation()
     {
+        if (!isSimulationSleeping)
+        {
+            isSimulationSleeping = true;
+            Debug.Log("<color=#7f8c8d><b>[SandSimulation]</b> 💤 ฟิสิกส์ทรายสงบนิ่งสนิทแล้ว... สั่งปิดลูปการคำนวณชั่วครู่เพื่อประหยัด CPU</color>");
+        }
+    }
+
+    public void WakeUpSimulation()
+    {
+        if (isSimulationSleeping)
+        {
+            isSimulationSleeping = false;
+            Debug.Log("<color=#f39c12><b>[SandSimulation]</b> ⚡ มีมวลสารขยับตัว! ปลุกระบบฟิสิกส์ถล่มให้ตื่นขึ้นมาคำนวณใหม่</color>");
+        }
+    }
+
+    public Vector3[] GetCurrentVertices()
+    {
+        return currentVertices;
+    }
+
+    public void MakeWet(int index, float moistureValue = 1.0f)
+    {
+        if (sandMoisture != null && index >= 0 && index < sandMoisture.Length)
+        {
+            if (sandMoisture[index] < 0.9f && isSimulationSleeping) WakeUpSimulation();
+            sandMoisture[index] = moistureValue;
+        }
+    }
+
+    public void PourSand(Vector3 hitPoint, int sandTypeIndex, float brushRadius, float pourSpeed)
+    {
+        if (sandDatabase == null || sandDatabase.sandTypes == null || sandDatabase.sandTypes.Length == 0) return;
+        sandTypeIndex = Mathf.Clamp(sandTypeIndex, 0, sandDatabase.sandTypes.Length - 1);
+
+        WakeUpSimulation();
+
         for (int i = 0; i < mainVertexCount; i++)
         {
             Vector3 worldPt = transform.TransformPoint(currentVertices[i]);
@@ -107,7 +175,8 @@ public class SandSimulation : MonoBehaviour
                 float falloff = 1f - (distance / brushRadius);
                 float addedThickness = pourSpeed * falloff * Time.deltaTime;
 
-                AddSandToColumn(i, colorIndex, addedThickness);
+                AddSandToColumn(i, sandTypeIndex, addedThickness);
+                sandMoisture[i] = 0f;
             }
         }
         UpdateMesh();
@@ -115,6 +184,8 @@ public class SandSimulation : MonoBehaviour
 
     public void VacuumSand(Vector3 hitPoint, float brushRadius, float vacuumSpeed)
     {
+        WakeUpSimulation();
+
         for (int i = 0; i < mainVertexCount; i++)
         {
             Vector3 worldPt = transform.TransformPoint(currentVertices[i]);
@@ -131,15 +202,17 @@ public class SandSimulation : MonoBehaviour
         UpdateMesh();
     }
 
-    private void ApplyAvalancheEffect(float simDeltaTime)
+    private bool ApplyAvalancheEffect(float simDeltaTime)
     {
-        if (sandColumns == null || sandColumns.Length == 0) return;
+        if (sandColumns == null || sandColumns.Length == 0) return false;
+        if (sandDatabase == null || sandDatabase.sandTypes == null || sandDatabase.sandTypes.Length == 0) return false;
+
         bool meshChanged = false;
 
-        float allowedHeightDiff = maxSlopeAngle * currentCellSize;
-
-        List<int> validNeighbors = new List<int>();
-        List<float> excessWeights = new List<float>();
+        for (int i = 0; i < mainVertexCount; i++)
+        {
+            heightSnapshot[i] = sandColumns[i].GetTotalHeight();
+        }
 
         for (int z = 0; z < gridZCount; z++)
         {
@@ -148,12 +221,19 @@ public class SandSimulation : MonoBehaviour
                 int currentIndex = z * gridXCount + x;
                 if (currentIndex >= sandColumns.Length) continue;
 
-                float currentHeight = sandColumns[currentIndex].GetTotalHeight();
+                float currentHeight = heightSnapshot[currentIndex];
                 if (currentHeight <= 0 || sandColumns[currentIndex].layers.Count == 0) continue;
 
-                validNeighbors.Clear();
-                excessWeights.Clear();
+                SandLayer topLayer = sandColumns[currentIndex].layers[sandColumns[currentIndex].layers.Count - 1];
+                int currentSandType = Mathf.Clamp(topLayer.sandTypeIndex, 0, sandDatabase.sandTypes.Length - 1);
+
+                SandDatabase.SandType activePhysics = sandDatabase.sandTypes[currentSandType];
+                float allowedHeightDiff = activePhysics.maxSlopeAngle * currentCellSize;
+
+                List<int> validNeighbors = new List<int>();
+                List<float> excessWeights = new List<float>();
                 float totalExcess = 0f;
+                float maxExcess = 0f;
 
                 for (int i = 0; i < 8; i++)
                 {
@@ -163,32 +243,39 @@ public class SandSimulation : MonoBehaviour
                     if (nx >= 0 && nx < gridXCount && nz >= 0 && nz < gridZCount)
                     {
                         int neighborIndex = nz * gridXCount + nx;
-                        float neighborHeight = sandColumns[neighborIndex].GetTotalHeight();
+                        float neighborHeight = heightSnapshot[neighborIndex];
                         float heightDiff = currentHeight - neighborHeight;
-
                         float targetSlope = allowedHeightDiff * distMult[i];
 
                         if (heightDiff > targetSlope)
                         {
                             float excess = heightDiff - targetSlope;
-                            validNeighbors.Add(neighborIndex);
-                            excessWeights.Add(excess);
-                            totalExcess += excess;
+
+                            if (excess > activePhysics.staticFriction)
+                            {
+                                float flowableExcess = excess - activePhysics.staticFriction;
+
+                                validNeighbors.Add(neighborIndex);
+                                excessWeights.Add(flowableExcess);
+                                totalExcess += flowableExcess;
+
+                                if (flowableExcess > maxExcess) maxExcess = flowableExcess;
+                            }
                         }
                     }
                 }
 
                 if (validNeighbors.Count > 0)
                 {
-                    float totalFlowAmount = totalExcess * flowRate * simDeltaTime;
+                    float totalFlowAmount = totalExcess * activePhysics.flowRate * simDeltaTime;
 
-                    int topColor = sandColumns[currentIndex].layers[sandColumns[currentIndex].layers.Count - 1].colorIndex;
-                    float topLayerThickness = sandColumns[currentIndex].layers[sandColumns[currentIndex].layers.Count - 1].thickness;
+                    float safeCap = maxExcess * 0.2f;
+                    if (totalFlowAmount > safeCap) totalFlowAmount = safeCap;
 
+                    float topLayerThickness = topLayer.thickness;
                     if (totalFlowAmount > topLayerThickness) totalFlowAmount = topLayerThickness;
-                    if (totalFlowAmount > totalExcess * 0.4f) totalFlowAmount = totalExcess * 0.4f;
 
-                    if (totalFlowAmount > 0f)
+                    if (totalFlowAmount > 0.00001f)
                     {
                         RemoveSandFromColumn(currentIndex, totalFlowAmount);
 
@@ -197,7 +284,12 @@ public class SandSimulation : MonoBehaviour
                             float portion = excessWeights[n] / totalExcess;
                             float amountToNeighbor = totalFlowAmount * portion;
 
-                            AddSandToColumn(validNeighbors[n], topColor, amountToNeighbor);
+                            AddSandToColumn(validNeighbors[n], topLayer.sandTypeIndex, amountToNeighbor);
+
+                            if (sandMoisture[currentIndex] > 0.1f)
+                            {
+                                sandMoisture[validNeighbors[n]] = Mathf.Max(sandMoisture[validNeighbors[n]], sandMoisture[currentIndex] * 0.8f);
+                            }
                         }
                         meshChanged = true;
                     }
@@ -205,19 +297,16 @@ public class SandSimulation : MonoBehaviour
             }
         }
 
-        if (meshChanged)
-        {
-            UpdateMesh();
-        }
+        return meshChanged;
     }
 
-    private void AddSandToColumn(int index, int colorIndex, float amount)
+    private void AddSandToColumn(int index, int sandTypeIndex, float amount)
     {
         var column = sandColumns[index];
-        if (column.GetTotalHeight() + amount > maxHeight) amount = maxHeight - column.GetTotalHeight();
+        if (column.GetTotalHeight() + amount > maxHeightLimit) amount = maxHeightLimit - column.GetTotalHeight();
         if (amount <= 0) return;
 
-        if (column.layers.Count > 0 && column.layers[column.layers.Count - 1].colorIndex == colorIndex)
+        if (column.layers.Count > 0 && column.layers[column.layers.Count - 1].sandTypeIndex == sandTypeIndex)
         {
             var layer = column.layers[column.layers.Count - 1];
             layer.thickness += amount;
@@ -225,7 +314,7 @@ public class SandSimulation : MonoBehaviour
         }
         else
         {
-            column.layers.Add(new SandLayer { colorIndex = colorIndex, thickness = amount });
+            column.layers.Add(new SandLayer { sandTypeIndex = sandTypeIndex, thickness = amount });
         }
     }
 
@@ -249,9 +338,34 @@ public class SandSimulation : MonoBehaviour
         }
     }
 
+    // 🚨 🪐 [ฟังก์ชันดั้งเดิมที่กู้ชีพกลับมาแล้ว] 
+    // ตัวส่งค่าความสูงของพิกเซลทรายกลับไปให้ระบบพู่กัน ToolManager และขอบน้ำใช้คำนวณ 3D Snap
+    public float GetHeightAtWorldPos(Vector3 worldPos)
+    {
+        Vector3 localPos = transform.InverseTransformPoint(worldPos);
+
+        float usableWidth = (gridXCount - 1) * currentCellSize;
+        float usableLength = (gridZCount - 1) * currentCellSize;
+
+        int x = Mathf.RoundToInt(((localPos.x / usableWidth) + 0.5f) * (gridXCount - 1));
+        int z = Mathf.RoundToInt(((localPos.z / usableLength) + 0.5f) * (gridZCount - 1));
+
+        x = Mathf.Clamp(x, 0, gridXCount - 1);
+        z = Mathf.Clamp(z, 0, gridZCount - 1);
+
+        int index = z * gridXCount + x;
+
+        if (currentVertices != null && index < currentVertices.Length) return currentVertices[index].y;
+        return 0f;
+    }
+
     private void UpdateMesh()
     {
+        if (sandDatabase == null || sandDatabase.sandTypes == null || sandDatabase.sandTypes.Length == 0) return;
         Color[] meshColors = new Color[currentVertices.Length];
+
+        float activeMultiplier = sandDatabase.wetDarknessMultiplier;
+        Color defaultEmptyColor = sandDatabase.baseDefaultColor;
 
         for (int i = 0; i < mainVertexCount; i++)
         {
@@ -259,13 +373,17 @@ public class SandSimulation : MonoBehaviour
 
             if (sandColumns[i].layers.Count > 0)
             {
-                int topColorIndex = sandColumns[i].layers[sandColumns[i].layers.Count - 1].colorIndex;
-                int safeIndex = Mathf.Clamp(topColorIndex, 0, sandColors.Length - 1);
-                meshColors[i] = sandColors[safeIndex];
+                SandLayer top = sandColumns[i].layers[sandColumns[i].layers.Count - 1];
+                int typeIdx = Mathf.Clamp(top.sandTypeIndex, 0, sandDatabase.sandTypes.Length - 1);
+
+                Color defaultColor = sandDatabase.sandTypes[typeIdx].sandColor;
+                Color wetColor = new Color(defaultColor.r * activeMultiplier, defaultColor.g * activeMultiplier, defaultColor.b * activeMultiplier, 1f);
+
+                meshColors[i] = Color.Lerp(defaultColor, wetColor, sandMoisture[i]);
             }
             else
             {
-                meshColors[i] = baseDefaultColor;
+                meshColors[i] = defaultEmptyColor;
             }
         }
 
@@ -273,7 +391,7 @@ public class SandSimulation : MonoBehaviour
         {
             for (int i = mainVertexCount; i < currentVertices.Length; i++)
             {
-                currentVertices[i].y = skirtDepth; // 🚨 ล็อกฐานกำแพงให้ดิ่งจมลงใต้ดินตามค่าที่เราตั้งไว้
+                currentVertices[i].y = skirtDepth;
 
                 int perimeterIndex = i - mainVertexCount;
                 if (perimeterIndex < perimeterIndices.Length)
@@ -283,7 +401,7 @@ public class SandSimulation : MonoBehaviour
                 }
                 else
                 {
-                    meshColors[i] = baseDefaultColor;
+                    meshColors[i] = defaultEmptyColor;
                 }
             }
         }
@@ -291,6 +409,7 @@ public class SandSimulation : MonoBehaviour
         filterMesh.vertices = currentVertices;
         filterMesh.colors = meshColors;
         filterMesh.RecalculateNormals();
+        filterMesh.RecalculateTangents();
 
         filterMesh.bounds = new Bounds(Vector3.zero, new Vector3(20f, 20f, 20f));
 

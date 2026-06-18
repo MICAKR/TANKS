@@ -8,6 +8,9 @@ public class SandGridGenerator : MonoBehaviour
     [Header("Tank Dimensions (ขนาดตู้ปลาขอบนอก)")]
     public float width = 0.508f;
     public float length = 0.254f;
+    // 🚨 🪐 [เพิ่มฟีเจอร์ใหม่] กำหนดระดับเพดานความสูงตู้ปลาไว้ที่นี่ที่เดียวจบเลยครับ!
+    [Tooltip("ความสูงสูงสุดของตู้กระจกใบนี้ (หน่วยเป็นเมตร) เช่น 0.4 คือตู้สูง 40 ซม.")]
+    public float tankHeight = 0.4f;
 
     [Header("Grid Density Settings")]
     public float cellSize = 0.01f;
@@ -138,6 +141,9 @@ public class SandGridGenerator : MonoBehaviour
         GetComponent<MeshFilter>().sharedMesh = generatedMesh;
         GetComponent<MeshCollider>().sharedMesh = generatedMesh;
 
-        Debug.Log($"[SandGridGenerator] สร้างแผ่นทรายพร้อมกำแพงทึบหลบขอบกระจกสำเร็จ!");
+        int totalPolygons = triangles.Count / 3;
+        int totalVertices = vertices.Count;
+
+        Debug.Log($"<color=#11caa0><b>[SandGridGenerator]</b></color> เจนตู้ปลาสำเร็จ! | <b>Vertices (จุด):</b> {totalVertices} จุด | <color=#005088><b>Polygons (สามเหลี่ยม):</b> {totalPolygons} หลี่ม</color>");
     }
 }
