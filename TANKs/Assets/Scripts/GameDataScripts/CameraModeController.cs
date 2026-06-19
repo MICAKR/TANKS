@@ -141,4 +141,9 @@ public class CameraModeController : MonoBehaviour
     {
         selectedTank = newTank;
     }
+    // เพิ่มฟังก์ชันนี้ลงในสคริปต์ CameraModeController
+    public bool IsDecorationMode()
+    {
+        return isDecorationMode;
+    }
 }

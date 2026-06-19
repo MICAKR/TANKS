@@ -43,12 +43,14 @@ public class LocalizationManager : MonoBehaviour
             localizedText.Add("TOOL_B_Sand", "ทราย");
             localizedText.Add("TOOL_B_Water", "น้ำ"); 
             localizedText.Add("TOOL_B_Smooth", "เกลี่ย");
+            
         }
         else if (currentLanguage == Language.English)
         {
             localizedText.Add("TOOL_B_Sand", "Sand");
             localizedText.Add("TOOL_B_Water", "Water");
             localizedText.Add("TOOL_B_Smooth", "Smooth");
+           
         }
     }
 

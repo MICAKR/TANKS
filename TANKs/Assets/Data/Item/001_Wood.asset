@@ -15,4 +15,5 @@ MonoBehaviour:
   id: 1
   itemName: Normal 20"
   icon: {fileID: 21300000, guid: 0ba6903c4a2598b47b814a2ffb24a5a1, type: 3}
+  category: 2
   description: 
