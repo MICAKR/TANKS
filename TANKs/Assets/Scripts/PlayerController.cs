@@ -1,4 +1,5 @@
 ﻿using UnityEngine;
+using UnityEngine.InputSystem;
 
 [RequireComponent(typeof(Rigidbody))]
 public class PlayerController : MonoBehaviour
@@ -7,7 +8,7 @@ public class PlayerController : MonoBehaviour
     [Tooltip("ความเร็วในการเดินซ้าย-ขวา")]
     public float moveSpeedX = 6f;
     [Tooltip("ความเร็วในการเดินลึกเข้า-ออก (แกน Z)")]
-    public float moveSpeedZ = 4f; // ปกติเดินลึกเข้าฉากมักจะตั้งให้ช้ากว่านิดหน่อยเพื่อมิติภาพ
+    public float moveSpeedZ = 4f;
     [Tooltip("ความเร็วในการหันหน้าตัวละคร")]
     public float rotationSpeed = 15f;
 
@@ -31,21 +32,26 @@ public class PlayerController : MonoBehaviour
 
     void Update()
     {
-        // 1. รับค่าปุ่มกด (A/D = ซ้ายขวา, W/S = ลึกเข้าออก)
-        float x = Input.GetAxisRaw("Horizontal");
-        float z = Input.GetAxisRaw("Vertical");
+        if (Keyboard.current == null) return;
+
+        float x = 0f;
+        float z = 0f;
+
+        if (Keyboard.current.aKey.isPressed || Keyboard.current.leftArrowKey.isPressed) x = -1f;
+        else if (Keyboard.current.dKey.isPressed || Keyboard.current.rightArrowKey.isPressed) x = 1f;
+
+        if (Keyboard.current.wKey.isPressed || Keyboard.current.upArrowKey.isPressed) z = 1f;
+        else if (Keyboard.current.sKey.isPressed || Keyboard.current.downArrowKey.isPressed) z = -1f;
+
         movementInput = new Vector3(x, 0f, z).normalized;
 
-        // 2. เช็คการแตะพื้น
         if (groundCheck != null)
         {
             isGrounded = Physics.CheckSphere(groundCheck.position, groundCheckRadius, groundLayer);
         }
 
-        // 3. กด Spacebar กระโดด
-        if (Input.GetButtonDown("Jump") && isGrounded)
+        if (Keyboard.current.spaceKey.wasPressedThisFrame && isGrounded)
         {
-            // รีเซ็ตแรงตกก่อนกระโดดเพื่อให้โดดได้ความสูงคงที่
             rb.linearVelocity = new Vector3(rb.linearVelocity.x, 0f, rb.linearVelocity.z);
             rb.AddForce(Vector3.up * jumpForce, ForceMode.Impulse);
         }
@@ -53,21 +59,19 @@ public class PlayerController : MonoBehaviour
 
     void FixedUpdate()
     {
-        // 🚨 จัดการการเดินใน FixedUpdate เพื่อให้ฟิสิกส์ลื่นไหล ไม่ทะลุกำแพง
+        // 🚨 🪐 ปรับความเร่งให้ตอบสนองไวขึ้นนิดนึง (จาก 10f เป็น 15f) เพื่อลดอาการหน่วง
         Vector3 targetVelocity = new Vector3(movementInput.x * moveSpeedX, rb.linearVelocity.y, movementInput.z * moveSpeedZ);
+        rb.linearVelocity = Vector3.Lerp(rb.linearVelocity, targetVelocity, 15f * Time.fixedDeltaTime);
 
-        // เกลี่ยความเร็วให้สมูทขึ้น (Acceleration)
-        rb.linearVelocity = Vector3.Lerp(rb.linearVelocity, targetVelocity, 10f * Time.fixedDeltaTime);
-
-        // 🚨 หมุนหันหน้าตัวละครไปตามทิศที่เดิน
         if (movementInput.magnitude > 0.1f)
         {
             Quaternion targetRotation = Quaternion.LookRotation(movementInput);
-            transform.rotation = Quaternion.Slerp(transform.rotation, targetRotation, rotationSpeed * Time.fixedDeltaTime);
+
+            // 🚨 🪐 เปลี่ยนมาใช้ rb.MoveRotation แทน transform.rotation เพื่อแก้ปัญหาภาพสั่น!
+            rb.MoveRotation(Quaternion.Slerp(rb.rotation, targetRotation, rotationSpeed * Time.fixedDeltaTime));
         }
     }
 
-    // เอาไว้วาดวงกลมดูจุดเช็คพื้นในหน้า Scene
     private void OnDrawGizmosSelected()
     {
         if (groundCheck != null)

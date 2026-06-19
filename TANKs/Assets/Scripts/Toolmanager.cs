@@ -66,10 +66,24 @@ public class ToolManager : MonoBehaviour
 
     void Update()
     {
+        // 🚨 🪐 ดักกล้องหาย! ถ้าหากล้องหลักไม่เจอ ให้ซ่อนบรัชและหยุดทำงานไปเลย
+        if (Camera.main == null)
+        {
+            if (brushIndicator != null) brushIndicator.enabled = false;
+            return;
+        }
+
+        // 🚨 🪐 [ดักโหมด] เช็คว่าถ้ากล้องกำลังวิ่งตามตัวละครอยู่ (โหมดเดินเล่น) ให้ห้ามใช้บรัชเด็ดขาด
+        SideScrollCamera camScript = Camera.main.GetComponent<SideScrollCamera>();
+        if (camScript != null && camScript.enabled)
+        {
+            if (brushIndicator != null) brushIndicator.enabled = false;
+            return;
+        }
+
         if (activeTool != CurrentTool.None && Mouse.current != null)
         {
-            // 🚨 🪐 [อัปเกรด: เช็คว่ากดปุ่ม ALT ค้างไว้ด้วยหรือไม่ ถึงจะให้ปรับขนาดแปรง]
-            bool isAltPressed = Keyboard.current.altKey.isPressed;
+            bool isAltPressed = Keyboard.current != null && Keyboard.current.altKey.isPressed;
             float scrollY = Mouse.current.scroll.ReadValue().y;
 
             if (isAltPressed && Mathf.Abs(scrollY) > 0.01f)
@@ -164,7 +178,6 @@ public class ToolManager : MonoBehaviour
                     }
                 }
 
-                // 🚨 🪐 --- [ระบบคำนวณหลัก] ---
                 if (isLeftPressed)
                 {
                     if (activeTool == CurrentTool.Sand && sandSimulation != null)
@@ -175,11 +188,9 @@ public class ToolManager : MonoBehaviour
                     {
                         waterSystem.PourWater(interactivePoint, currentActiveRadius, waterPourSpeed);
 
-                        // 🚨 🪐 ส่งข้อมูลปริมาตรน้ำที่เท ไปให้สมองกลาง (Parent) บันทึกค่า
                         TankWaterQuality tank = waterSystem.GetComponentInParent<TankWaterQuality>();
                         if (tank != null)
                         {
-                            // V = (1/3) * PI * r^2 * h
                             float volumeM3 = (Mathf.PI * currentActiveRadius * currentActiveRadius * waterPourSpeed * Time.deltaTime) / 3f;
                             tank.AddWater(volumeM3);
                         }
@@ -199,7 +210,6 @@ public class ToolManager : MonoBehaviour
                     {
                         waterSystem.VacuumWater(interactivePoint, currentActiveRadius, waterVacuumSpeed);
 
-                        // 🚨 🪐 ส่งข้อมูลแจ้งสมองกลางว่ามีการดูดน้ำออก
                         TankWaterQuality tank = waterSystem.GetComponentInParent<TankWaterQuality>();
                         if (tank != null)
                         {

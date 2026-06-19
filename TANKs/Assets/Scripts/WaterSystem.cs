@@ -429,4 +429,37 @@ public class WaterSystem : MonoBehaviour
         }
         return 0f;
     }
+    // ... [โค้ดเดิมด้านบนทั้งหมด] ...
+
+    // 🚨 🪐 ฟังก์ชันใหม่: สั่งเร่งเวลาฟิสิกส์น้ำให้ราบเรียบและคลื่นนิ่งสนิทในพริบตา
+    public void ForceSettlePhysics()
+    {
+        Debug.Log("<color=#3498db><b>[WaterSystem]</b> ⏳ สั่งเร่งความเร็วฟิสิกส์ของเหลวให้เข้าสู่สมดุล...</color>");
+
+        int maxIterations = 200;
+        int currentIter = 0;
+        bool stillMoving = true;
+        bool wavesActive = true;
+
+        // จำลองเวลาเฟรมละ 0.1 วิ (เร็วกว่าปกติ 5 เท่า) เพื่อเคลียร์คลื่นและน้ำให้เรียบ
+        while ((stillMoving || wavesActive) && currentIter < maxIterations)
+        {
+            stillMoving = ApplyWaterFlowEffect(0.1f);
+            wavesActive = ApplyWaveSimulation();
+            currentIter++;
+        }
+
+        // รีเซ็ตคลื่นให้เป็น 0 ไปเลยเพื่อความชัวร์ว่านิ่งกริ๊บ
+        for (int i = 0; i < currentWaves.Length; i++)
+        {
+            currentWaves[i] = 0f;
+            previousWaves[i] = 0f;
+            nextWaves[i] = 0f;
+        }
+
+        UpdateMesh();
+        GoToSleepSimulation();
+        Debug.Log($"<color=#2ecc71><b>[WaterSystem]</b> ✅ ผิวน้ำสงบนิ่งแล้ว (ใช้ไป {currentIter} รอบการคำนวณ)</color>");
+    }
+
 }

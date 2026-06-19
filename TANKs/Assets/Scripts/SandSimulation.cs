@@ -48,6 +48,9 @@ public class SandSimulation : MonoBehaviour
     // ระบบคุมการหลับ/ตื่นฟิสิกส์เพื่อเร่งความเร็วคอม
     private bool isSimulationSleeping = false;
 
+    // 🚨 🪐 เก็บ Reference ระบบน้ำเอาไว้ให้ทรายถามข้อมูลได้ตลอดเวลา
+    private WaterSystem cachedWaterSys;
+
     private readonly int[] dx = { -1, 1, 0, 0, -1, 1, -1, 1 };
     private readonly int[] dz = { 0, 0, -1, 1, -1, -1, 1, 1 };
     private readonly float[] distMult = { 1f, 1f, 1f, 1f, 1.414f, 1.414f, 1.414f, 1.414f };
@@ -67,8 +70,15 @@ public class SandSimulation : MonoBehaviour
         }
         else
         {
-            Debug.LogError("[SandSimulation] 不พบสคริปต์ SandGridGenerator!");
+            Debug.LogError("[SandSimulation] ไม่พบสคริปต์ SandGridGenerator!");
             return;
+        }
+
+        // ค้นหา WaterSystem เก็บไว้ตอนเริ่มเกม
+        cachedWaterSys = GetComponent<WaterSystem>();
+        if (cachedWaterSys == null && transform.parent != null)
+        {
+            cachedWaterSys = transform.parent.GetComponentInChildren<WaterSystem>();
         }
 
         filterMesh = GetComponent<MeshFilter>().mesh;
@@ -91,22 +101,50 @@ public class SandSimulation : MonoBehaviour
     {
         if (sandDatabase == null) return;
 
-        // คำนวณการระเหยของน้ำออกจากเนื้อทรายรายเฟรม
+        if (isSimulationSleeping) return;
+
         float activeDrySpeed = sandDatabase.drySpeed;
-        bool isDryingActive = false;
+        bool isMoistureChanged = false; // 🚨 🪐 เปลี่ยนชื่อตัวแปรให้ครอบคลุมทั้งการ "แห้ง" และ "เปียก"
+
+        // 🚨 🪐 ลูปตรวจสอบความชื้นของทราย (ฉบับทรายเช็คระดับน้ำเอง)
         for (int i = 0; i < mainVertexCount; i++)
         {
-            if (sandMoisture[i] > 0f)
-            {
-                sandMoisture[i] -= activeDrySpeed * Time.deltaTime;
-                if (sandMoisture[i] < 0f) sandMoisture[i] = 0f;
-                isDryingActive = true;
+            bool isUnderwater = false;
 
-                if (isSimulationSleeping) WakeUpSimulation();
+            // ให้ทรายเช็คระดับน้ำบนหัวตัวเองว่าท่วมอยู่ไหม?
+            if (cachedWaterSys != null)
+            {
+                Vector3 worldPt = transform.TransformPoint(currentVertices[i]);
+                float localWaterY = cachedWaterSys.GetHeightAtWorldPos(worldPt);
+
+                // ถ้าระดับน้ำ(Y) สูงกว่าระดับทราย(Y) แสดงว่าท่วมอยู่!
+                if (localWaterY > currentVertices[i].y + 0.001f)
+                {
+                    isUnderwater = true;
+                }
+            }
+
+            if (isUnderwater)
+            {
+                // ถ้าน้ำท่วมอยู่ บังคับให้ดูดซับความเปียกชุ่มทันที (ล็อคสีเข้ม)
+                if (sandMoisture[i] < 1.0f)
+                {
+                    sandMoisture[i] += 5.0f * Time.deltaTime; // เปียกขึ้นอย่างรวดเร็ว
+                    if (sandMoisture[i] > 1.0f) sandMoisture[i] = 1.0f;
+                    isMoistureChanged = true;
+                }
+            }
+            else
+            {
+                // ถ้าโผล่พ้นน้ำ หรือน้ำแห้ง ค่อยๆ ระเหยสีให้ซีดลงตามปกติ
+                if (sandMoisture[i] > 0f)
+                {
+                    sandMoisture[i] -= activeDrySpeed * Time.deltaTime;
+                    if (sandMoisture[i] < 0f) sandMoisture[i] = 0f;
+                    isMoistureChanged = true;
+                }
             }
         }
-
-        if (isSimulationSleeping && !isDryingActive) return;
 
         tickTimer += Time.deltaTime;
 
@@ -114,14 +152,17 @@ public class SandSimulation : MonoBehaviour
         {
             bool avalancheChanged = ApplyAvalancheEffect(tickTimer);
 
-            if (avalancheChanged || isDryingActive)
+            if (avalancheChanged || isMoistureChanged)
             {
                 UpdateMesh();
             }
-            else if (!avalancheChanged && !isDryingActive)
+
+            // 🚨 🪐 ถ้าทรายไม่ถล่มแล้ว และความชื้นนิ่งสนิทแล้ว (ทรายเปียกหมดแล้ว/แห้งหมดแล้ว) ค่อยสั่งหลับ
+            if (!avalancheChanged && !isMoistureChanged)
             {
                 GoToSleepSimulation();
             }
+
             tickTimer = 0f;
         }
     }
@@ -131,7 +172,7 @@ public class SandSimulation : MonoBehaviour
         if (!isSimulationSleeping)
         {
             isSimulationSleeping = true;
-            Debug.Log("<color=#7f8c8d><b>[SandSimulation]</b> 💤 ฟิสิกส์ทรายสงบนิ่งสนิทแล้ว... สั่งปิดลูปการคำนวณชั่วครู่เพื่อประหยัด CPU</color>");
+            Debug.Log("<color=#7f8c8d><b>[SandSimulation]</b> 💤 ฟิสิกส์ทรายสงบนิ่งสนิทแล้ว... สั่งปิดลูปและล็อคสีทราย</color>");
         }
     }
 
@@ -165,6 +206,9 @@ public class SandSimulation : MonoBehaviour
 
         WakeUpSimulation();
 
+        // 🚨 🪐 เททรายปุ๊บ ปลุกระบบน้ำให้ตื่นมาคำนวณปริมาตรการล้นของน้ำทันที
+        if (cachedWaterSys != null) cachedWaterSys.WakeUpSimulation();
+
         for (int i = 0; i < mainVertexCount; i++)
         {
             Vector3 worldPt = transform.TransformPoint(currentVertices[i]);
@@ -176,6 +220,8 @@ public class SandSimulation : MonoBehaviour
                 float addedThickness = pourSpeed * falloff * Time.deltaTime;
 
                 AddSandToColumn(i, sandTypeIndex, addedThickness);
+
+                // เททรายใหม่ลงมาจะเป็นทรายแห้ง (ถ้ามันร่วงลงใต้น้ำ เดี๋ยวลูป Update ถัดไปจะรู้ตัวแล้วปรับให้เปียกเองอย่างไว!)
                 sandMoisture[i] = 0f;
             }
         }
@@ -185,6 +231,8 @@ public class SandSimulation : MonoBehaviour
     public void VacuumSand(Vector3 hitPoint, float brushRadius, float vacuumSpeed)
     {
         WakeUpSimulation();
+
+        if (cachedWaterSys != null) cachedWaterSys.WakeUpSimulation();
 
         for (int i = 0; i < mainVertexCount; i++)
         {
@@ -201,15 +249,13 @@ public class SandSimulation : MonoBehaviour
         }
         UpdateMesh();
     }
-    // 🚨 🪐 [ฟังก์ชัน SmoothSand ฉบับกระจายโหลดแบบ Blur Filter คำนวณสมบูรณ์แบบ]
+
     public void SmoothSand(Vector3 hitPoint, float brushRadius, float smoothSpeed)
     {
         WakeUpSimulation();
 
-        WaterSystem waterSys = GetComponent<WaterSystem>();
-        if (waterSys != null) waterSys.WakeUpSimulation();
+        if (cachedWaterSys != null) cachedWaterSys.WakeUpSimulation();
 
-        // 1. ดึงความสูง ณ ปัจจุบันของทุกพิกเซลเก็บไว้เป็นต้นแบบอ้างอิงชั่วคราว (Snapshot)
         float[] tempHeights = new float[mainVertexCount];
         for (int i = 0; i < mainVertexCount; i++)
         {
@@ -218,7 +264,6 @@ public class SandSimulation : MonoBehaviour
 
         bool hasChanged = false;
 
-        // 2. เริ่มลูปคำนวณสมานความสูงเฉลี่ยในวงแปรงพู่กัน
         for (int z = 0; z < gridZCount; z++)
         {
             for (int x = 0; x < gridXCount; x++)
@@ -233,7 +278,6 @@ public class SandSimulation : MonoBehaviour
                 {
                     float falloff = 1f - (distance / brushRadius);
 
-                    // อัลกอริทึมเก็บค่าผลรวมความสูงและนับจำนวนเซลล์รอบข้าง 4 ทิศทาง (Cross Blur Filter)
                     float sumHeight = 0f;
                     int neighborCount = 0;
 
@@ -248,7 +292,6 @@ public class SandSimulation : MonoBehaviour
                         float currentHeight = tempHeights[currentIndex];
                         float heightDifference = targetAverageHeight - currentHeight;
 
-                        // เพิ่มกำลังแรงเกลี่ยคูณตาม Falloff (ตรงกลางบรัชจะสมูทไวกว่าขอบ)
                         float smoothAmount = heightDifference * smoothSpeed * falloff * Time.deltaTime;
 
                         if (Mathf.Abs(smoothAmount) > 0.00001f)
@@ -257,7 +300,6 @@ public class SandSimulation : MonoBehaviour
 
                             if (smoothAmount > 0f)
                             {
-                                // คอลัมน์ต่ำกว่ารอบข้าง -> ดึงเนื้อทรายมาถมเพิ่มให้สูงเท่าเพื่อน
                                 if (column.layers.Count > 0)
                                 {
                                     var topLayer = column.layers[column.layers.Count - 1];
@@ -278,7 +320,6 @@ public class SandSimulation : MonoBehaviour
                             }
                             else
                             {
-                                // คอลัมน์สูงโด่งแหลมกว่ารอบข้าง -> ปาดความหนาทรายส่วนเกินออก
                                 if (column.layers.Count > 0)
                                 {
                                     var topLayer = column.layers[column.layers.Count - 1];
@@ -300,9 +341,8 @@ public class SandSimulation : MonoBehaviour
                     }
                 }
             }
-        } // <-- สิ้นสุดลูปแกน Z และแกน X ทั้งหมดอย่างสมบูรณ์ตรงนี้
+        }
 
-        // 🚨 🪐 [ย้ายมาจุดนี้] สั่ง UpdateMesh รวบยอด "ครั้งเดียวอยู่นอกลูปทั้งหมด" ของเฟรม
         if (hasChanged)
         {
             UpdateMesh();
@@ -404,11 +444,9 @@ public class SandSimulation : MonoBehaviour
             }
         }
 
-        // 🚨 🪐 [ดักแทรกปลุกพ่วงระบบน้ำข้างๆ] เมื่อมีทรายไหลถล่ม 
         if (meshChanged)
         {
-            WaterSystem waterSys = GetComponent<WaterSystem>();
-            if (waterSys != null) waterSys.WakeUpSimulation();
+            if (cachedWaterSys != null) cachedWaterSys.WakeUpSimulation();
         }
 
         return meshChanged;
@@ -529,5 +567,26 @@ public class SandSimulation : MonoBehaviour
         {
             GetComponent<MeshCollider>().sharedMesh = filterMesh;
         }
+    }
+
+    public void ForceSettlePhysics()
+    {
+        if (sandDatabase == null) return;
+
+        Debug.Log("<color=#e67e22><b>[SandSimulation]</b> ⏳ สั่งเร่งความเร็วฟิสิกส์ทรายให้เข้าสู่สมดุล...</color>");
+
+        int maxIterations = 200;
+        int currentIter = 0;
+        bool stillFalling = true;
+
+        while (stillFalling && currentIter < maxIterations)
+        {
+            stillFalling = ApplyAvalancheEffect(0.1f);
+            currentIter++;
+        }
+
+        UpdateMesh();
+        GoToSleepSimulation();
+        Debug.Log($"<color=#27ae60><b>[SandSimulation]</b> ✅ ทรายสงบนิ่งแล้ว (ใช้ไป {currentIter} รอบการคำนวณ)</color>");
     }
 }
