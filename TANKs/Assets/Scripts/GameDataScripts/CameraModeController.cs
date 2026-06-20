@@ -8,7 +8,7 @@ public class CameraModeController : MonoBehaviour
     public ToolManager toolManagerRef;
 
     [Header("UI Manager")]
-    [Tooltip("ลาก Object ที่มีสคริปต์ DecorationUIManager มาใส่ที่นี่ 👈")]
+    [Tooltip("ลาก Object ที่มีสคริปต์ DecorationUIManager มาใส่ที่นี่")]
     public DecorationUIManager decorationUI;
 
     [Header("Mode Objects")]
@@ -34,7 +34,10 @@ public class CameraModeController : MonoBehaviour
     public float minPitch = 5f;
     public float maxPitch = 85f;
 
-    private bool isDecorationMode = false;
+    // 🚨 แยกสถานะออกเป็น 2 โหมด
+    private bool isViewingMode = false; // โหมดดูตู้ (UI 1)
+    private bool isEditingMode = false; // โหมดแก้ไขตู้ (UI 0)
+
     private float currentYaw = 0f;
     private float currentPitch = 45f;
     private float currentDistance = 1.0f;
@@ -56,21 +59,31 @@ public class CameraModeController : MonoBehaviour
             }
         }
 
-        // สั่งให้ UI Manager จัดการตำแหน่งเริ่มต้น
-        if (decorationUI != null) decorationUI.Initialize(isDecorationMode);
+        // สั่งให้ UI Manager ซ่อน UI ทุกตัวตอนเริ่มเกม
+        if (decorationUI != null) decorationUI.Initialize(false);
 
-        SetMode(isDecorationMode);
         if (toolManagerRef != null) toolManagerRef.UpdateTargetTank(selectedTank);
     }
 
     void Update()
     {
-        if (isDecorationMode && Keyboard.current.escapeKey.wasPressedThisFrame)
+        // 🚨 1. ระบบกด ESC เพื่อออกหรือย้อนกลับ
+        if (Keyboard.current.escapeKey.wasPressedThisFrame)
         {
-            ExitDecorationMode();
+            if (isEditingMode)
+            {
+                // ถ้าอยู่โหมดแก้ไข -> ย้อนกลับไปโหมดดูตู้
+                ExitEditMode();
+            }
+            else if (isViewingMode)
+            {
+                // ถ้าอยู่โหมดดูตู้ -> ออกไปเดินปกติ
+                ExitViewMode();
+            }
         }
 
-        if (!isDecorationMode)
+        // 2. ระบบ Hover และ คลิกตู้ (ทำงานเฉพาะตอนเดินปกติ)
+        if (!isViewingMode)
         {
             if (computerRef != null && computerRef.IsUsingComputer())
             {
@@ -114,9 +127,8 @@ public class CameraModeController : MonoBehaviour
                         Transform mainTank = hit.collider.transform.parent;
                         if (mainTank == null) mainTank = hit.collider.transform;
 
-                        ChangeSelectedTank(mainTank);
-                        isDecorationMode = true;
-                        SetMode(isDecorationMode);
+                        // 🚨 คลิกปุ๊บ เข้าโหมดดูตู้ทันที
+                        EnterViewMode(mainTank);
                     }
                 }
                 else
@@ -130,7 +142,8 @@ public class CameraModeController : MonoBehaviour
             }
         }
 
-        if (isDecorationMode && selectedTank != null && mainCamera != null)
+        // 3. ระบบควบคุมกล้อง (ทำงานทั้งตอนดูตู้และตอนแก้ไข)
+        if (isViewingMode && selectedTank != null && mainCamera != null)
         {
             if (Mouse.current.middleButton.isPressed)
             {
@@ -164,53 +177,105 @@ public class CameraModeController : MonoBehaviour
         if (hoveredRenderer != null)
         {
             if (hoveredRenderer.material.HasProperty("_BaseColor"))
-            {
                 hoveredRenderer.material.SetColor("_BaseColor", originalColor);
-            }
             else if (hoveredRenderer.material.HasProperty("_FillColor"))
-            {
                 hoveredRenderer.material.SetColor("_FillColor", originalColor);
-            }
             else if (hoveredRenderer.material.HasProperty("_Color"))
-            {
                 hoveredRenderer.material.color = originalColor;
-            }
+
             hoveredRenderer = null;
         }
     }
 
-    public void ExitDecorationMode()
+    // ==========================================
+    // 🚨 STATE MANAGEMENT (จัดการเข้า/ออกโหมดต่างๆ)
+    // ==========================================
+
+    // เข้าโหมดดูตู้ (เดิน -> ดูตู้)
+    private void EnterViewMode(Transform newTank)
     {
-        if (isDecorationMode)
-        {
-            isDecorationMode = false;
-            SetMode(isDecorationMode);
-        }
+        ChangeSelectedTank(newTank);
+        isViewingMode = true;
+        isEditingMode = false;
+
+        // ปิดตัวละครและสลับกล้อง
+        if (playerCharacter != null) playerCharacter.SetActive(false);
+        if (playerCamScript != null) playerCamScript.enabled = false;
+
+        // เปิด UI ดูตู้ (ID 1)
+        if (decorationUI != null) decorationUI.ShowPanelByID(1);
+
+        Debug.Log("🔍 เข้าสู่: โหมดดูตู้ (View Mode)");
     }
 
-    private void SetMode(bool decorationMode)
+    // ออกจากโหมดดูตู้ (ดูตู้ -> เดิน)
+    private void ExitViewMode()
     {
-        if (playerCharacter != null) playerCharacter.SetActive(!decorationMode);
+        isViewingMode = false;
+        isEditingMode = false;
 
-        // 🚨 สั่งงานเปิด/ปิด แบบเจาะจงเฉพาะ Panel ID = 0 เท่านั้น
-        if (decorationUI != null)
-        {
-            if (decorationMode)
-                decorationUI.ShowPanelByID(0); // เปิดแค่ Tool Panel (ID 0)
-            else
-                decorationUI.HidePanelByID(0); // ปิดแค่ Tool Panel (ID 0)
-        }
+        // ปิด UI ดูตู้ (ID 1)
+        if (decorationUI != null) decorationUI.HidePanelByID(1);
 
+        // คืนค่ากล้องและตัวละคร
+        if (playerCharacter != null) playerCharacter.SetActive(true);
         if (playerCamScript != null)
         {
-            if (!decorationMode && playerCharacter != null)
-            {
-                playerCamScript.target = playerCharacter.transform;
-            }
-            playerCamScript.enabled = !decorationMode;
+            if (playerCharacter != null) playerCamScript.target = playerCharacter.transform;
+            playerCamScript.enabled = true;
         }
 
-        if (!decorationMode && selectedTank != null)
+        SettlePhysics(); // สั่งให้ทรายและน้ำสงบนิ่ง
+        Debug.Log("🚶 ย้อนกลับ: โหมดเดินปกติ (Walking Mode)");
+    }
+
+    // ==========================================
+    // 🚨 BUTTON METHODS (สำหรับเอาไปผูกกับปุ่ม UI)
+    // ==========================================
+
+    // เข้าโหมดแก้ไข (เรียกผ่านปุ่ม "Edit" ใน UI ID 1)
+    public void EnterEditMode()
+    {
+        if (!isViewingMode) return;
+        isEditingMode = true;
+
+        if (decorationUI != null)
+        {
+            decorationUI.HidePanelByID(1); // ซ่อนหน้าดูตู้
+            decorationUI.ShowPanelByID(0); // เปิดหน้าเครื่องมือจัดตู้
+        }
+        Debug.Log("🛠️ เข้าสู่: โหมดแก้ไขตู้ (Edit Mode)");
+    }
+
+    // ออกจากโหมดแก้ไข (ย้อนกลับไปหน้าดูตู้)
+    public void ExitEditMode()
+    {
+        isEditingMode = false;
+
+        if (decorationUI != null)
+        {
+            decorationUI.HidePanelByID(0); // ซ่อนหน้าเครื่องมือ
+            decorationUI.ShowPanelByID(1); // เปิดหน้าดูตู้กลับมา
+        }
+
+        // เคลียร์บรัชทิ้งเผื่อผู้เล่นถือค้างไว้
+        if (toolManagerRef != null) toolManagerRef.activeTool = ToolManager.CurrentTool.None;
+
+        Debug.Log("🔍 ย้อนกลับ: โหมดดูตู้ (View Mode)");
+    }
+
+    // เมธอดสลับโหมด (เผื่ออยากใช้ปุ่มเดียวสลับไปมา)
+    public void ToggleEditMode()
+    {
+        if (isEditingMode) ExitEditMode();
+        else EnterEditMode();
+    }
+
+    // ==========================================
+
+    private void SettlePhysics()
+    {
+        if (selectedTank != null)
         {
             SandSimulation sand = selectedTank.GetComponentInChildren<SandSimulation>();
             WaterSystem water = selectedTank.GetComponentInChildren<WaterSystem>();
@@ -222,7 +287,6 @@ public class CameraModeController : MonoBehaviour
                 {
                     float localGroundY = sand.GetHeightAtWorldPos(playerCharacter.transform.position);
                     float worldGroundY = sand.transform.TransformPoint(new Vector3(0, localGroundY, 0)).y;
-
                     Vector3 safePos = playerCharacter.transform.position;
                     safePos.y = worldGroundY + 1.0f;
                     playerCharacter.transform.position = safePos;
@@ -233,8 +297,6 @@ public class CameraModeController : MonoBehaviour
             }
             if (water != null) water.ForceSettlePhysics();
         }
-
-        Debug.Log("สลับโหมด: " + (decorationMode ? "โหมดจัดตู้ (Decoration)" : "โหมดเดินปกติ (Walking)"));
     }
 
     public void ChangeSelectedTank(Transform newTank)
@@ -242,18 +304,32 @@ public class CameraModeController : MonoBehaviour
         selectedTank = newTank;
 
         if (toolManagerRef != null)
-        {
             toolManagerRef.UpdateTargetTank(newTank);
-        }
 
         if (mainCamera != null)
-        {
             currentDistance = Vector3.Distance(mainCamera.transform.position, selectedTank.position);
-        }
     }
 
+    // สคริปต์คอมพิวเตอร์ยังต้องใช้อยู่ เลยส่งค่า isViewingMode ไปแทน
     public bool IsDecorationMode()
     {
-        return isDecorationMode;
+        return isViewingMode;
+    }
+    // ==========================================
+    // 🚨 EMERGENCY EXIT (ให้สคริปต์คอมพิวเตอร์เรียกใช้)
+    // ==========================================
+    public void ExitDecorationMode()
+    {
+        // ถ้ากำลังจัดตู้อยู่ ให้ถอยกลับมาโหมดดูก่อน
+        if (isEditingMode)
+        {
+            ExitEditMode();
+        }
+
+        // ถ้ากำลังดูตู้อยู่ ให้ออกไปโหมดเดินปกติ
+        if (isViewingMode)
+        {
+            ExitViewMode();
+        }
     }
 }
