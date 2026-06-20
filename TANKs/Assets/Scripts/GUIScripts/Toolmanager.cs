@@ -36,9 +36,10 @@ public class ToolManager : MonoBehaviour
     [Header("Sand Settings")]
     public int selectedSandTypeIndex = 0;
 
-    [Header("Simulation References")]
+    [Header("Simulation References (จะถูกอัปเดตอัตโนมัติเมื่อเลือกตู้)")]
     public SandSimulation sandSimulation;
     public WaterSystem waterSystem;
+    private Transform currentActiveTank; // 👈 เก็บเพื่อเช็คว่ายิง Raycast โดนตู้ปัจจุบันไหม
 
     [Header("Layer Settings")]
     public LayerMask sandLayer;
@@ -64,18 +65,47 @@ public class ToolManager : MonoBehaviour
         SetupBrushIndicator();
     }
 
+    // 🚨 ฟังก์ชันใหม่สำหรับเปลี่ยนตู้ปลาเป้าหมาย
+    // 🚨 ฟังก์ชันใหม่สำหรับเปลี่ยนตู้ปลาเป้าหมาย
+    public void UpdateTargetTank(Transform tankTransform)
+    {
+        currentActiveTank = tankTransform;
+
+        // 👉 เคลียร์ Tool ทิ้งทันทีเมื่อเปลี่ยนตู้/เข้าตู้
+        activeTool = CurrentTool.None;
+
+        // 👉 ซ่อนเส้นวงกลม (Brush Indicator) ทันทีเพื่อกันมันค้างที่จอ
+        if (brushIndicator != null) brushIndicator.enabled = false;
+
+        if (tankTransform != null)
+        {
+            sandSimulation = tankTransform.GetComponentInChildren<SandSimulation>();
+            waterSystem = tankTransform.GetComponentInChildren<WaterSystem>();
+        }
+        else
+        {
+            sandSimulation = null;
+            waterSystem = null;
+        }
+    }
+
     void Update()
     {
-        // 🚨 🪐 ดักกล้องหาย! ถ้าหากล้องหลักไม่เจอ ให้ซ่อนบรัชและหยุดทำงานไปเลย
         if (Camera.main == null)
         {
             if (brushIndicator != null) brushIndicator.enabled = false;
             return;
         }
 
-        // 🚨 🪐 [ดักโหมด] เช็คว่าถ้ากล้องกำลังวิ่งตามตัวละครอยู่ (โหมดเดินเล่น) ให้ห้ามใช้บรัชเด็ดขาด
         SideScrollCamera camScript = Camera.main.GetComponent<SideScrollCamera>();
         if (camScript != null && camScript.enabled)
+        {
+            if (brushIndicator != null) brushIndicator.enabled = false;
+            return;
+        }
+
+        // 🚨 ป้องกันหากไม่มีตู้ที่กำลังจัดอยู่ ให้ปิดการทำงานบรัช
+        if (currentActiveTank == null || (sandSimulation == null && waterSystem == null))
         {
             if (brushIndicator != null) brushIndicator.enabled = false;
             return;
@@ -110,115 +140,120 @@ public class ToolManager : MonoBehaviour
 
             if (Physics.Raycast(ray, out RaycastHit hit, Mathf.Infinity, sandLayer))
             {
-                Vector3 interactivePoint = hit.point;
-                float currentActiveRadius = 0f;
-
-                if (activeTool == CurrentTool.Water && waterSystem != null)
+                // 🚨 ตรวจสอบว่า Collider ที่เมาส์ชี้อยู่ เป็นส่วนหนึ่งของตู้ปลาที่เลือกไว้หรือไม่
+                // (ไม่ว่าจะชี้โดนตัวจำลองทราย ตัวน้ำ หรือกล่อง Hitbox ขอบนอกที่เป็นลูกหลาน)
+                if (hit.collider.transform.IsChildOf(currentActiveTank) || hit.collider.transform == currentActiveTank)
                 {
-                    float localY = waterSystem.GetHeightAtWorldPos(hit.point);
-                    Vector3 localPos = waterSystem.transform.InverseTransformPoint(hit.point);
-                    localPos.y = localY;
-                    interactivePoint = waterSystem.transform.TransformPoint(localPos);
-                    currentActiveRadius = waterBrushRadius;
-                }
-                else if (activeTool == CurrentTool.Sand && sandSimulation != null)
-                {
-                    float localY = sandSimulation.GetHeightAtWorldPos(hit.point);
-                    Vector3 localPos = sandSimulation.transform.InverseTransformPoint(hit.point);
-                    localPos.y = localY;
-                    interactivePoint = sandSimulation.transform.TransformPoint(localPos);
-                    currentActiveRadius = sandBrushRadius;
-                }
-                else if (activeTool == CurrentTool.Smooth && sandSimulation != null)
-                {
-                    float localY = sandSimulation.GetHeightAtWorldPos(hit.point);
-                    Vector3 localPos = sandSimulation.transform.InverseTransformPoint(hit.point);
-                    localPos.y = localY;
-                    interactivePoint = sandSimulation.transform.TransformPoint(localPos);
-                    currentActiveRadius = smoothBrushRadius;
-                }
+                    Vector3 interactivePoint = hit.point;
+                    float currentActiveRadius = 0f;
 
-                brushIndicator.enabled = true;
-                DrawPreviewCircle(interactivePoint, currentActiveRadius);
-
-                bool isLeftPressed = Mouse.current.leftButton.isPressed;
-                bool isRightPressed = Mouse.current.rightButton.isPressed;
-
-                if (isLeftPressed && activeTool == CurrentTool.Sand && sandDustPrefab != null)
-                {
-                    for (int i = 0; i < spawnDensityPerFrame; i++)
+                    if (activeTool == CurrentTool.Water && waterSystem != null)
                     {
-                        Vector2 randomCircle = Random.insideUnitCircle * currentActiveRadius;
-                        Vector3 spawnPos = new Vector3(
-                            interactivePoint.x + randomCircle.x,
-                            interactivePoint.y + 0.08f,
-                            interactivePoint.z + randomCircle.y
-                        );
-                        GameObject dust = Instantiate(sandDustPrefab, spawnPos, Quaternion.identity);
-                        Rigidbody rb = dust.GetComponent<Rigidbody>();
-                        if (rb != null) rb.linearVelocity = new Vector3(Random.Range(-0.1f, 0.1f), -1f, Random.Range(-0.1f, 0.1f));
+                        float localY = waterSystem.GetHeightAtWorldPos(hit.point);
+                        Vector3 localPos = waterSystem.transform.InverseTransformPoint(hit.point);
+                        localPos.y = localY;
+                        interactivePoint = waterSystem.transform.TransformPoint(localPos);
+                        currentActiveRadius = waterBrushRadius;
                     }
-                }
-
-                if (isLeftPressed && activeTool == CurrentTool.Water && waterDropletPrefab != null)
-                {
-                    for (int i = 0; i < waterDropsPerFrame; i++)
+                    else if (activeTool == CurrentTool.Sand && sandSimulation != null)
                     {
-                        Vector2 randomCircle = Random.insideUnitCircle * currentActiveRadius;
-                        Vector3 spawnPos = new Vector3(
-                            interactivePoint.x + randomCircle.x,
-                            interactivePoint.y + -0.05f,
-                            interactivePoint.z + randomCircle.y
-                        );
-                        GameObject drop = Instantiate(waterDropletPrefab, spawnPos, Quaternion.identity);
-                        DropletController dropletCtrl = drop.GetComponent<DropletController>();
-                        if (dropletCtrl != null) dropletCtrl.waterSystem = waterSystem;
-                        Rigidbody rb = drop.GetComponent<Rigidbody>();
-                        if (rb != null) rb.linearVelocity = new Vector3(Random.Range(-0.5f, 0.5f), -2f, Random.Range(-0.5f, 0.5f));
-                    }
-                }
-
-                if (isLeftPressed)
-                {
-                    if (activeTool == CurrentTool.Sand && sandSimulation != null)
-                    {
-                        sandSimulation.PourSand(interactivePoint, selectedSandTypeIndex, currentActiveRadius, pourSpeed);
-                    }
-                    else if (activeTool == CurrentTool.Water && waterSystem != null)
-                    {
-                        waterSystem.PourWater(interactivePoint, currentActiveRadius, waterPourSpeed);
-
-                        TankWaterQuality tank = waterSystem.GetComponentInParent<TankWaterQuality>();
-                        if (tank != null)
-                        {
-                            float volumeM3 = (Mathf.PI * currentActiveRadius * currentActiveRadius * waterPourSpeed * Time.deltaTime) / 3f;
-                            tank.AddWater(volumeM3);
-                        }
+                        float localY = sandSimulation.GetHeightAtWorldPos(hit.point);
+                        Vector3 localPos = sandSimulation.transform.InverseTransformPoint(hit.point);
+                        localPos.y = localY;
+                        interactivePoint = sandSimulation.transform.TransformPoint(localPos);
+                        currentActiveRadius = sandBrushRadius;
                     }
                     else if (activeTool == CurrentTool.Smooth && sandSimulation != null)
                     {
-                        sandSimulation.SmoothSand(interactivePoint, currentActiveRadius, smoothStrength);
+                        float localY = sandSimulation.GetHeightAtWorldPos(hit.point);
+                        Vector3 localPos = sandSimulation.transform.InverseTransformPoint(hit.point);
+                        localPos.y = localY;
+                        interactivePoint = sandSimulation.transform.TransformPoint(localPos);
+                        currentActiveRadius = smoothBrushRadius;
                     }
-                }
-                else if (isRightPressed)
-                {
-                    if (activeTool == CurrentTool.Sand && sandSimulation != null)
-                    {
-                        sandSimulation.VacuumSand(interactivePoint, currentActiveRadius, vacuumSpeed);
-                    }
-                    else if (activeTool == CurrentTool.Water && waterSystem != null)
-                    {
-                        waterSystem.VacuumWater(interactivePoint, currentActiveRadius, waterVacuumSpeed);
 
-                        TankWaterQuality tank = waterSystem.GetComponentInParent<TankWaterQuality>();
-                        if (tank != null)
+                    brushIndicator.enabled = true;
+                    DrawPreviewCircle(interactivePoint, currentActiveRadius);
+
+                    bool isLeftPressed = Mouse.current.leftButton.isPressed;
+                    bool isRightPressed = Mouse.current.rightButton.isPressed;
+
+                    if (isLeftPressed && activeTool == CurrentTool.Sand && sandDustPrefab != null)
+                    {
+                        for (int i = 0; i < spawnDensityPerFrame; i++)
                         {
-                            float volumeM3 = (Mathf.PI * currentActiveRadius * currentActiveRadius * waterVacuumSpeed * Time.deltaTime) / 3f;
-                            tank.RemoveWater(volumeM3);
+                            Vector2 randomCircle = Random.insideUnitCircle * currentActiveRadius;
+                            Vector3 spawnPos = new Vector3(
+                                interactivePoint.x + randomCircle.x,
+                                interactivePoint.y + 0.08f,
+                                interactivePoint.z + randomCircle.y
+                            );
+                            GameObject dust = Instantiate(sandDustPrefab, spawnPos, Quaternion.identity);
+                            Rigidbody rb = dust.GetComponent<Rigidbody>();
+                            if (rb != null) rb.linearVelocity = new Vector3(Random.Range(-0.1f, 0.1f), -1f, Random.Range(-0.1f, 0.1f));
                         }
                     }
+
+                    if (isLeftPressed && activeTool == CurrentTool.Water && waterDropletPrefab != null)
+                    {
+                        for (int i = 0; i < waterDropsPerFrame; i++)
+                        {
+                            Vector2 randomCircle = Random.insideUnitCircle * currentActiveRadius;
+                            Vector3 spawnPos = new Vector3(
+                                interactivePoint.x + randomCircle.x,
+                                interactivePoint.y + -0.05f,
+                                interactivePoint.z + randomCircle.y
+                            );
+                            GameObject drop = Instantiate(waterDropletPrefab, spawnPos, Quaternion.identity);
+                            DropletController dropletCtrl = drop.GetComponent<DropletController>();
+                            if (dropletCtrl != null) dropletCtrl.waterSystem = waterSystem;
+                            Rigidbody rb = drop.GetComponent<Rigidbody>();
+                            if (rb != null) rb.linearVelocity = new Vector3(Random.Range(-0.5f, 0.5f), -2f, Random.Range(-0.5f, 0.5f));
+                        }
+                    }
+
+                    if (isLeftPressed)
+                    {
+                        if (activeTool == CurrentTool.Sand && sandSimulation != null)
+                        {
+                            sandSimulation.PourSand(interactivePoint, selectedSandTypeIndex, currentActiveRadius, pourSpeed);
+                        }
+                        else if (activeTool == CurrentTool.Water && waterSystem != null)
+                        {
+                            waterSystem.PourWater(interactivePoint, currentActiveRadius, waterPourSpeed);
+
+                            TankWaterQuality tank = waterSystem.GetComponentInParent<TankWaterQuality>();
+                            if (tank != null)
+                            {
+                                float volumeM3 = (Mathf.PI * currentActiveRadius * currentActiveRadius * waterPourSpeed * Time.deltaTime) / 3f;
+                                tank.AddWater(volumeM3);
+                            }
+                        }
+                        else if (activeTool == CurrentTool.Smooth && sandSimulation != null)
+                        {
+                            sandSimulation.SmoothSand(interactivePoint, currentActiveRadius, smoothStrength);
+                        }
+                    }
+                    else if (isRightPressed)
+                    {
+                        if (activeTool == CurrentTool.Sand && sandSimulation != null)
+                        {
+                            sandSimulation.VacuumSand(interactivePoint, currentActiveRadius, vacuumSpeed);
+                        }
+                        else if (activeTool == CurrentTool.Water && waterSystem != null)
+                        {
+                            waterSystem.VacuumWater(interactivePoint, currentActiveRadius, waterVacuumSpeed);
+
+                            TankWaterQuality tank = waterSystem.GetComponentInParent<TankWaterQuality>();
+                            if (tank != null)
+                            {
+                                float volumeM3 = (Mathf.PI * currentActiveRadius * currentActiveRadius * waterVacuumSpeed * Time.deltaTime) / 3f;
+                                tank.RemoveWater(volumeM3);
+                            }
+                        }
+                    }
+                    return;
                 }
-                return;
             }
         }
 

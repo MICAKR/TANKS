@@ -56,18 +56,11 @@ public void CloseApp(GameObject window)
             }
         }
 
-        // 2. เรียกใช้เมธอดปิดจาก ComputerClickable (ใช้ Object.FindFirstObjectByType แทน)
+        // 2. เรียกให้คอมพิวเตอร์ปิดตัวเอง (ให้มันจัดการเมาส์เอง)
         ComputerClickable computer = Object.FindFirstObjectByType<ComputerClickable>();
         if (computer != null)
         {
-            computer.ForceCloseComputer(); // 👈 ตรงนี้แหละที่ขาดไปครับ
+            computer.ForceCloseComputer();
         }
-
-        else
-        {
-            Debug.LogError("ไม่พบ ComputerClickable ในฉาก!");
-        }
-        Cursor.visible = true;
-        Cursor.lockState = CursorLockMode.None;
     }
 }
