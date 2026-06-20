@@ -118,9 +118,11 @@ public class TankWaterQuality : MonoBehaviour
         int mainVertCount = gridGen.gridXCount * gridGen.gridZCount;
         float exactCellArea = tankBaseArea / mainVertCount;
 
+        // 1. คำนวณปริมาณวัสดุรองพื้น (ทราย)
+        Vector3[] sVerts = null;
         if (sandSim != null)
         {
-            Vector3[] sVerts = sandSim.GetCurrentVertices();
+            sVerts = sandSim.GetCurrentVertices();
             if (sVerts != null)
             {
                 float totalSand_M3 = 0f;
@@ -133,16 +135,29 @@ public class TankWaterQuality : MonoBehaviour
             }
         }
 
+        // 2. คำนวณปริมาณน้ำ (🚨 แก้ไข: หักลบความสูงพื้นทรายออก เพื่อให้ได้มวลน้ำจริง)
         if (waterSim != null)
         {
+            MeshRenderer waterMR = waterSim.GetComponent<MeshRenderer>();
             MeshFilter waterMF = waterSim.GetComponent<MeshFilter>();
+
             if (waterMF != null && waterMF.sharedMesh != null)
             {
                 Vector3[] wVerts = waterMF.sharedMesh.vertices;
                 float totalWater_M3 = 0f;
+
                 for (int i = 0; i < mainVertCount && i < wVerts.Length; i++)
                 {
-                    if (wVerts[i].y > 0) totalWater_M3 += (wVerts[i].y * scale.y) * exactCellArea;
+                    // อ่านความสูงของทราย ณ พิกัดเดียวกัน (ถ้าจุดนั้นไม่มีทรายให้เป็น 0)
+                    float sandHeightAtVertex = (sVerts != null && i < sVerts.Length) ? sVerts[i].y : 0f;
+
+                    // ความหนาของน้ำที่แท้จริง = ระดับผิวน้ำรวม - ระดับพื้นทราย
+                    float actualWaterThickness = wVerts[i].y - sandHeightAtVertex;
+
+                    if (actualWaterThickness > 0.0001f)
+                    {
+                        totalWater_M3 += (actualWaterThickness * scale.y) * exactCellArea;
+                    }
                 }
                 waterVolumeLiters = totalWater_M3 * 1000f;
             }
@@ -317,5 +332,11 @@ public class TankWaterQuality : MonoBehaviour
     {
         if (waterVolumeLiters <= 0f) return 1f;
         return 1f - (turbidity / 100f);
+    }
+    // เพิ่มไว้ล่างสุดใน TankWaterQuality.cs
+    public float GetTotalTankVolumeLiters()
+    {
+        // คำนวณปริมาตรรวมของตู้ (กว้าง x ยาว x สูงสุด * 1000 ลิตร)
+        return tankBaseArea * tankMaxHeight * 1000f;
     }
 }

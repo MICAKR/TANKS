@@ -11,7 +11,6 @@ GameObject:
   - component: {fileID: 4011502831797199636}
   - component: {fileID: 1281460759119217113}
   - component: {fileID: 3918710015060082276}
-  - component: {fileID: 5600782546078438378}
   - component: {fileID: 3889578275952691065}
   m_Layer: 0
   m_Name: WaterDropletPrefab
@@ -92,27 +91,6 @@ MeshRenderer:
   m_SortingOrder: 0
   m_MaskInteraction: 0
   m_AdditionalVertexStreams: {fileID: 0}
---- !u!135 &5600782546078438378
-SphereCollider:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 2074680277760204973}
-  m_Material: {fileID: 0}
-  m_IncludeLayers:
-    serializedVersion: 2
-    m_Bits: 0
-  m_ExcludeLayers:
-    serializedVersion: 2
-    m_Bits: 0
-  m_LayerOverridePriority: 0
-  m_IsTrigger: 0
-  m_ProvidesContacts: 0
-  m_Enabled: 1
-  serializedVersion: 3
-  m_Radius: 0.5
-  m_Center: {x: 0, y: 0, z: 0}
 --- !u!114 &3889578275952691065
 MonoBehaviour:
   m_ObjectHideFlags: 0

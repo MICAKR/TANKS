@@ -43,14 +43,34 @@ public class LocalizationManager : MonoBehaviour
             localizedText.Add("TOOL_B_Sand", "ทราย");
             localizedText.Add("TOOL_B_Water", "น้ำ"); 
             localizedText.Add("TOOL_B_Smooth", "เกลี่ย");
-            
+
+            localizedText.Add("Custom_TMP", "แก้ไข");
+            localizedText.Add("Language", "TH");
+            ///////////////////
+            localizedText.Add("INFO_WATER", "ปริมาณน้ำ");
+            localizedText.Add("INFO_SAND", "ปริมาณวัสดุรองพื้น");
+            localizedText.Add("INFO_NITROGEN", "ปริมาณไนโตรเจน");
+            localizedText.Add("INFO_SALINITY", "ความเค็ม");
+            localizedText.Add("INFO_PH", "ค่า pH");
+            localizedText.Add("INFO_NO_WATER", "ไม่มีน้ำ");
+
         }
         else if (currentLanguage == Language.English)
         {
             localizedText.Add("TOOL_B_Sand", "Sand");
             localizedText.Add("TOOL_B_Water", "Water");
             localizedText.Add("TOOL_B_Smooth", "Smooth");
-           
+
+            localizedText.Add("Custom_TMP", "Edit");
+            localizedText.Add("Language", "US");
+            ///////////////////////
+            localizedText.Add("INFO_WATER", "Water Volume");
+            localizedText.Add("INFO_SAND", "Substrate Volume");
+            localizedText.Add("INFO_NITROGEN", "Nitrogen Level");
+            localizedText.Add("INFO_SALINITY", "Salinity");
+            localizedText.Add("INFO_PH", "pH Level");
+            localizedText.Add("INFO_NO_WATER", "No Water");
+
         }
     }
 
