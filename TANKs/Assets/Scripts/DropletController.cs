@@ -4,9 +4,10 @@ public class DropletController : MonoBehaviour
 {
     [Header("Auto-Assigned Reference")]
     public WaterSystem waterSystem;
+    private SandSimulation sandSystem; // 🚨 🪐 เพิ่มตัวอ้างอิงถึงระบบพื้นทราย
+
     private Material dropletMaterial;
 
-    // 🚨 🪐 [ตัวแปรคุมแรงกระจายตัวแผ่ออกข้าง]
     private Vector3 moveDirection;
     private float currentSpreadSpeed;
 
@@ -19,11 +20,17 @@ public class DropletController : MonoBehaviour
     [Tooltip("ความเร็วในการหดตัวละลายกลืนไปกับผิวน้ำ")]
     public float dissolveSpeed = 0.05f;
 
-    // 🚨 🪐 [เพิ่มตัวแปรคุมให้ค่อยๆ ลอยตกลงมา]
-    [Tooltip("ความเร็วในการลอยตกลงสู่ผิวน้ำ (ยิ่งเยอะยิ่งร่วงไว)")]
+    [Header("⏳ Initial Fall Settings")]
+    [Tooltip("ความเร็วในการจมดิ่งลงดินตอนเกิดแรกเริ่ม")]
     public float fallSpeed = 0.8f;
 
-    // 🚨 🪐 [ตัวแปรคำนวณพื้นที่ขอบเขตตู้ปลา]
+    [Header("🎈 Buoyancy Settings (ระบบลอยตัว)")]
+    [Tooltip("ความเร็วสูงสุดในการลอยตัวกลับขึ้นสู่ผิวน้ำ")]
+    public float riseSpeed = 0.6f;
+    [Tooltip("ความเร็วในการเปลี่ยนทิศทางจากจมเป็นลอยขึ้น (ยิ่งมากยิ่งหักหัวกลับขึ้นไว)")]
+    public float buoyancyDamping = 4.0f;
+    private float currentVerticalVelocity;
+
     private float usableWidth;
     private float usableLength;
     private bool hasGridBounds = false;
@@ -35,10 +42,8 @@ public class DropletController : MonoBehaviour
             waterSystem = FindFirstObjectByType<WaterSystem>();
         }
 
-        // 🚨 🪐 [ระบบคำนวณหาขอบเขตตู้ปลาอัตโนมัติ]
         if (waterSystem != null)
         {
-            // วิ่งไปขอข้อมูลขนาด Grid จากคอมโพเนนต์เจนฉากมาคำนวณขอบตู้กระจกแบบ Real-time
             SandGridGenerator generator = waterSystem.GetComponent<SandGridGenerator>();
             if (generator != null)
             {
@@ -46,75 +51,91 @@ public class DropletController : MonoBehaviour
                 usableLength = (generator.gridZCount - 1) * generator.cellSize;
                 hasGridBounds = true;
             }
+
+            // 🚨 🪐 พยายามค้นหาระบบทรายที่อยู่ในตู้เดียวกัน
+            Transform tankParent = waterSystem.transform.parent;
+            if (tankParent != null)
+            {
+                sandSystem = tankParent.GetComponentInChildren<SandSimulation>();
+            }
+            if (sandSystem == null) sandSystem = FindFirstObjectByType<SandSimulation>();
         }
 
         dropletMaterial = GetComponent<Renderer>().material;
 
-        // 1. สุ่มขนาดเริ่มต้น
         float randomScale = Random.Range(minScale, maxScale);
         transform.localScale = new Vector3(randomScale, randomScale, randomScale);
 
-        // 2. สุ่มความเร็วแผ่ออกข้าง
         currentSpreadSpeed = Random.Range(minSpreadSpeed, maxSpreadSpeed);
 
-        // 3. สุ่มทิศทางแบนราบ (รอบทิศทาง 360 องศา)
         float randomX = Random.Range(-1f, 1f);
         float randomZ = Random.Range(-1f, 1f);
         float randomY = Random.Range(-0.1f, 0.2f);
 
         moveDirection = new Vector3(randomX, randomY, randomZ).normalized;
 
-        // ทำลายตัวเองทิ้งหลังผ่านไป 2 วินาที เผื่อสคริปต์หดตัวทำงานไม่ทัน
-        Destroy(gameObject, 2f);
+        currentVerticalVelocity = -fallSpeed;
+
+        Destroy(gameObject, 2.5f);
     }
 
     void Update()
     {
-        // 4. ⚡ ขยับตำแหน่งพุ่งกระจายออกไป + ค่อยๆ ลอยตกลงมา
+        currentVerticalVelocity = Mathf.MoveTowards(currentVerticalVelocity, riseSpeed, Time.deltaTime * buoyancyDamping);
+
         Vector3 currentVelocity = moveDirection * currentSpreadSpeed;
-        currentVelocity.y -= fallSpeed; // ใส่แรงดึงลงไปในแกน Y เพื่อให้ค่อยๆ ร่วง
+        currentVelocity.y += currentVerticalVelocity;
 
         transform.position += currentVelocity * Time.deltaTime;
 
-        // 🚨 🪐 [ระบบตรวจจับการหลุดออกนอกขอบเขตน้ำ/ขอบตู้ปลา]
         if (hasGridBounds && waterSystem != null)
         {
-            // แปลงพิกัดโลกของหยดน้ำให้กลายเป็นพิกัดภายในตู้ปลา (Local Space)
             Vector3 localPos = waterSystem.transform.InverseTransformPoint(transform.position);
-
-            // เช็คแกน X และแกน Z ว่าหลุดออกจากรัศมีครึ่งหนึ่งของบ่อทราย/บ่อน้ำหรือไม่
             if (Mathf.Abs(localPos.x) > usableWidth * 0.5f || Mathf.Abs(localPos.z) > usableLength * 0.5f)
             {
-                // ถ้าหลุดขอบกระจกปุ๊บ สั่งลบตัวเองทิ้งทันทีในเฟรมนั้นเลย!
                 Destroy(gameObject);
                 return;
             }
         }
 
-        // 5. ระบบแรงหนืดน้ำ ชะลอความเร็วการแผ่ออกข้างลงเรื่อยๆ
         currentSpreadSpeed = Mathf.Lerp(currentSpreadSpeed, 0f, Time.deltaTime * 5f);
 
-        // 6. ระบบละลาย ค่อยๆ ยุบสเกลลงจนเหลือ 0 แล้วทำลายตัวเองทิ้ง
         transform.localScale -= Vector3.one * dissolveSpeed * Time.deltaTime;
-
         if (transform.localScale.x <= 0f)
         {
             Destroy(gameObject);
             return;
         }
 
-        // 7. จัดการส่งค่าให้ Shader ล่องหนใต้น้ำเหมือนเดิม
+        // 🚨 ตรวจจับการชนทั้งผิวน้ำด้านบน และพื้นทรายด้านล่าง
         if (waterSystem != null)
         {
+            // --- 1. คำนวณความสูงผิวน้ำ ---
             float localY = waterSystem.GetHeightAtWorldPos(transform.position);
             float worldWaterY = waterSystem.transform.TransformPoint(new Vector3(0, localY, 0)).y;
 
             dropletMaterial.SetFloat("_WaterHeight", worldWaterY);
 
-            // เผื่อหยดน้ำมุดลงไปลึกเกิน 5 ซม. ก็ให้เคลียร์ทิ้งเลย
-            if (transform.position.y < worldWaterY - 0.05f)
+            // แตกเมื่อลอยชนผิวน้ำ
+            if (currentVerticalVelocity > 0f && transform.position.y >= worldWaterY - 0.005f)
             {
                 Destroy(gameObject);
+                return;
+            }
+
+            // --- 2. คำนวณความสูงพื้นทราย/ก้นตู้ ---
+            float worldSandY = worldWaterY - 0.5f; // ค่าเริ่มต้นเผื่อหาทรายไม่เจอ (ลึก 50 ซม.)
+            if (sandSystem != null)
+            {
+                float localSandY = sandSystem.GetHeightAtWorldPos(transform.position);
+                worldSandY = sandSystem.transform.TransformPoint(new Vector3(0, localSandY, 0)).y;
+            }
+
+            // 🚨 แตกเมื่อจมลงไปชนพื้นทราย (เผื่อระยะ offset ไว้นิดนึงให้ดูเนียนตา)
+            if (transform.position.y <= worldSandY + 0.02f)
+            {
+                Destroy(gameObject);
+                return;
             }
         }
     }

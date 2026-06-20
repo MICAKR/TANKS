@@ -12,7 +12,7 @@ GameObject:
   - component: {fileID: 1281460759119217113}
   - component: {fileID: 3918710015060082276}
   - component: {fileID: 3889578275952691065}
-  m_Layer: 0
+  m_Layer: 7
   m_Name: WaterDropletPrefab
   m_TagString: Untagged
   m_Icon: {fileID: 0}
@@ -109,4 +109,6 @@ MonoBehaviour:
   minSpreadSpeed: 0.1
   maxSpreadSpeed: 0.3
   dissolveSpeed: 0.001
-  fallSpeed: 0.1
+  fallSpeed: 0.12
+  riseSpeed: 0.1
+  buoyancyDamping: 0.2
