@@ -3,10 +3,13 @@ using UnityEngine.InputSystem;
 using DG.Tweening;
 
 public class CameraModeController : MonoBehaviour
-
 {
     [Tooltip("ลาก Object ที่มีสคริปต์ ToolManager มาใส่ที่นี่")]
     public ToolManager toolManagerRef;
+
+    [Header("UI Manager")]
+    [Tooltip("ลาก Object ที่มีสคริปต์ DecorationUIManager มาใส่ที่นี่ 👈")]
+    public DecorationUIManager decorationUI;
 
     [Header("Mode Objects")]
     public GameObject playerCharacter;
@@ -16,16 +19,9 @@ public class CameraModeController : MonoBehaviour
     public ComputerClickable computerRef;
 
     [Header("Highlight Settings")]
-    [Tooltip("สีที่จะเปลี่ยนตอนเอาเมาส์ไปชี้")]
-    public Color highlightColor = new Color(1f, 1f, 1f, 0.5f); // สีขาวแบบกึ่งโปร่งใส
+    public Color highlightColor = new Color(1f, 1f, 1f, 0.5f);
     private Renderer hoveredRenderer;
     private Color originalColor;
-
-    [Header("UI Settings")]
-    public RectTransform toolPanel;
-    public float animationDuration = 0.5f;
-    public Vector2 hiddenPos = new Vector2(300, 0);
-    public Vector2 shownPos = new Vector2(0, 0);
 
     [Header("Tank Selection")]
     public Transform selectedTank;
@@ -60,23 +56,22 @@ public class CameraModeController : MonoBehaviour
             }
         }
 
-        if (toolPanel != null) toolPanel.anchoredPosition = isDecorationMode ? shownPos : hiddenPos;
+        // สั่งให้ UI Manager จัดการตำแหน่งเริ่มต้น
+        if (decorationUI != null) decorationUI.Initialize(isDecorationMode);
+
         SetMode(isDecorationMode);
         if (toolManagerRef != null) toolManagerRef.UpdateTargetTank(selectedTank);
     }
 
     void Update()
     {
-        // 1. ออกจากโหมดจัดตู้
         if (isDecorationMode && Keyboard.current.escapeKey.wasPressedThisFrame)
         {
             ExitDecorationMode();
         }
 
-        // 2. ระบบ Hover และ คลิก (ทำงานเฉพาะโหมดเดินปกติ)
         if (!isDecorationMode)
         {
-            // ถ้ากำลังเปิดคอมอยู่ ให้ล้างไฮไลท์แล้วหยุดทำงาน
             if (computerRef != null && computerRef.IsUsingComputer())
             {
                 ClearHover();
@@ -86,45 +81,37 @@ public class CameraModeController : MonoBehaviour
             Ray ray = Camera.main.ScreenPointToRay(Mouse.current.position.ReadValue());
             if (Physics.Raycast(ray, out RaycastHit hit))
             {
-                // เช็คว่ายิงโดนกล่อง Child ที่ตั้ง Tag "Tank" ไว้ไหม
                 if (hit.collider.CompareTag("Tank"))
                 {
                     Renderer hitRenderer = hit.collider.GetComponent<Renderer>();
 
-                    // --- ระบบ Hover (เปลี่ยนสี) ---
-                    // --- ระบบ Hover (เปลี่ยนสี) ---
                     if (hitRenderer != null && hitRenderer != hoveredRenderer)
                     {
-                        ClearHover(); // ล้างสีตัวเก่าก่อน
+                        ClearHover();
                         hoveredRenderer = hitRenderer;
 
-                        // เช็คชื่อตัวแปรใน Shader ว่าใช้อะไร จะได้ไม่ Error
                         if (hoveredRenderer.material.HasProperty("_BaseColor"))
                         {
                             originalColor = hoveredRenderer.material.GetColor("_BaseColor");
                             hoveredRenderer.material.SetColor("_BaseColor", highlightColor);
                         }
-                        else if (hoveredRenderer.material.HasProperty("_FillColor")) // รองรับ Shader Graph ที่ตั้งชื่อ Fill Color
+                        else if (hoveredRenderer.material.HasProperty("_FillColor"))
                         {
                             originalColor = hoveredRenderer.material.GetColor("_FillColor");
                             hoveredRenderer.material.SetColor("_FillColor", highlightColor);
                         }
-                        else if (hoveredRenderer.material.HasProperty("_Color")) // รองรับ Standard Shader
+                        else if (hoveredRenderer.material.HasProperty("_Color"))
                         {
                             originalColor = hoveredRenderer.material.color;
                             hoveredRenderer.material.color = highlightColor;
                         }
                     }
 
-                    // --- ระบบ Click ---
                     if (Mouse.current.leftButton.wasPressedThisFrame)
                     {
-                        ClearHover(); // ล้างสีก่อนเข้าโหมดจัดตู้
+                        ClearHover();
 
-                        // สำคัญ: ดึง Object แม่ (Parent) มาเป็นตู้หลัก
                         Transform mainTank = hit.collider.transform.parent;
-
-                        // ถ้าไม่มี Parent ให้ใช้ตัวมันเองเป็นตู้หลักไปเลย
                         if (mainTank == null) mainTank = hit.collider.transform;
 
                         ChangeSelectedTank(mainTank);
@@ -134,16 +121,15 @@ public class CameraModeController : MonoBehaviour
                 }
                 else
                 {
-                    ClearHover(); // ถ้าเอาเมาส์ไปชี้อย่างอื่นที่ไม่ใช่ตู้
+                    ClearHover();
                 }
             }
             else
             {
-                ClearHover(); // ถ้าเมาส์ชี้อากาศ
+                ClearHover();
             }
         }
 
-        // 3. ระบบควบคุมกล้องตอนจัดตู้
         if (isDecorationMode && selectedTank != null && mainCamera != null)
         {
             if (Mouse.current.middleButton.isPressed)
@@ -173,7 +159,6 @@ public class CameraModeController : MonoBehaviour
         }
     }
 
-    // ฟังก์ชันช่วยสำหรับล้างสีกลับเป็นเหมือนเดิม
     void ClearHover()
     {
         if (hoveredRenderer != null)
@@ -207,10 +192,13 @@ public class CameraModeController : MonoBehaviour
     {
         if (playerCharacter != null) playerCharacter.SetActive(!decorationMode);
 
-        if (toolPanel != null)
+        // 🚨 สั่งงานเปิด/ปิด แบบเจาะจงเฉพาะ Panel ID = 0 เท่านั้น
+        if (decorationUI != null)
         {
-            toolPanel.DOAnchorPos(decorationMode ? shownPos : hiddenPos, animationDuration)
-                     .SetEase(Ease.OutCubic);
+            if (decorationMode)
+                decorationUI.ShowPanelByID(0); // เปิดแค่ Tool Panel (ID 0)
+            else
+                decorationUI.HidePanelByID(0); // ปิดแค่ Tool Panel (ID 0)
         }
 
         if (playerCamScript != null)
@@ -253,7 +241,6 @@ public class CameraModeController : MonoBehaviour
     {
         selectedTank = newTank;
 
-        // 🚨 สั่งอัปเดตเป้าหมายฟิสิกส์ให้สคริปต์ ToolManager รู้จักตู้ใหม่ทันที
         if (toolManagerRef != null)
         {
             toolManagerRef.UpdateTargetTank(newTank);
