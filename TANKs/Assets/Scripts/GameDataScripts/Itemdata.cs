@@ -15,7 +15,8 @@ public class ItemData : ScriptableObject
         PetFood,        // อาหารสัตว์เลี้ยง
         Medicine,       // ยาสัตว์เลี้ยง
         Electronics,    // อุปกรณ์อิเล็กทรอนิกส์
-        FilterMedia     // ไส้กรอง
+        FilterMedia,    // ไส้กรอง
+        Plant           // ต้นไม้ 👈 (เพิ่มให้แล้วครับ)
     }
 
     public int id;
