@@ -74,7 +74,6 @@ public class SandSimulation : MonoBehaviour
             return;
         }
 
-        // ค้นหา WaterSystem เก็บไว้ตอนเริ่มเกม
         cachedWaterSys = GetComponent<WaterSystem>();
         if (cachedWaterSys == null && transform.parent != null)
         {
@@ -101,23 +100,19 @@ public class SandSimulation : MonoBehaviour
     {
         if (sandDatabase == null) return;
 
-        if (isSimulationSleeping) return;
-
         float activeDrySpeed = sandDatabase.drySpeed;
-        bool isMoistureChanged = false; // 🚨 🪐 เปลี่ยนชื่อตัวแปรให้ครอบคลุมทั้งการ "แห้ง" และ "เปียก"
+        bool isMoistureChanged = false;
 
-        // 🚨 🪐 ลูปตรวจสอบความชื้นของทราย (ฉบับทรายเช็คระดับน้ำเอง)
+        // 🚨 ปรับปรุง: ลูปตรวจสอบและคำนวณความชื้นจะทำงานเสมอ แม้ฟิสิกส์การถล่มจะ Sleep ไปแล้ว
         for (int i = 0; i < mainVertexCount; i++)
         {
             bool isUnderwater = false;
 
-            // ให้ทรายเช็คระดับน้ำบนหัวตัวเองว่าท่วมอยู่ไหม?
             if (cachedWaterSys != null)
             {
                 Vector3 worldPt = transform.TransformPoint(currentVertices[i]);
                 float localWaterY = cachedWaterSys.GetHeightAtWorldPos(worldPt);
 
-                // ถ้าระดับน้ำ(Y) สูงกว่าระดับทราย(Y) แสดงว่าท่วมอยู่!
                 if (localWaterY > currentVertices[i].y + 0.001f)
                 {
                     isUnderwater = true;
@@ -126,19 +121,23 @@ public class SandSimulation : MonoBehaviour
 
             if (isUnderwater)
             {
-                // ถ้าน้ำท่วมอยู่ บังคับให้ดูดซับความเปียกชุ่มทันที (ล็อคสีเข้ม)
                 if (sandMoisture[i] < 1.0f)
                 {
-                    sandMoisture[i] += 5.0f * Time.deltaTime; // เปียกขึ้นอย่างรวดเร็ว
+                    // ถ้าน้ำท่วมอยู่ แต่ทรายยังเปียกไม่สุด ให้ปลุกระบบขึ้นมาอัปเดตสีแมช
+                    if (isSimulationSleeping) WakeUpSimulation();
+
+                    sandMoisture[i] += 5.0f * Time.deltaTime;
                     if (sandMoisture[i] > 1.0f) sandMoisture[i] = 1.0f;
                     isMoistureChanged = true;
                 }
             }
             else
             {
-                // ถ้าโผล่พ้นน้ำ หรือน้ำแห้ง ค่อยๆ ระเหยสีให้ซีดลงตามปกติ
                 if (sandMoisture[i] > 0f)
                 {
+                    // ถ้าพ้นน้ำและยังแห้งไม่สนิท ให้รันระบบต่อจนกว่าจะแห้ง
+                    if (isSimulationSleeping) WakeUpSimulation();
+
                     sandMoisture[i] -= activeDrySpeed * Time.deltaTime;
                     if (sandMoisture[i] < 0f) sandMoisture[i] = 0f;
                     isMoistureChanged = true;
@@ -146,18 +145,22 @@ public class SandSimulation : MonoBehaviour
             }
         }
 
+        // หากระบบฟิสิกส์หลับอยู่ และไม่มีความชื้นเปลี่ยนสีแปลงค่าแล้ว ให้ Skip ลูปถล่มด้านล่างไปได้เลย เพื่อประหยัด CPU
+        if (isSimulationSleeping && !isMoistureChanged) return;
+
         tickTimer += Time.deltaTime;
 
         if (tickTimer >= sandDatabase.simulationInterval)
         {
             bool avalancheChanged = ApplyAvalancheEffect(tickTimer);
 
+            // อัปเดต Mesh ทุกครั้งที่มีการขยับของมวลทราย หรือระดับสีความชื้นเปลี่ยนไป
             if (avalancheChanged || isMoistureChanged)
             {
                 UpdateMesh();
             }
 
-            // 🚨 🪐 ถ้าทรายไม่ถล่มแล้ว และความชื้นนิ่งสนิทแล้ว (ทรายเปียกหมดแล้ว/แห้งหมดแล้ว) ค่อยสั่งหลับ
+            // 🚨 บังคับล็อค: ต้องไม่ถล่ม และค่าความเปียกชุ่ม/ระเหย ต้องนิ่งสนิทจริงๆ ถึงจะยอมให้หลับ
             if (!avalancheChanged && !isMoistureChanged)
             {
                 GoToSleepSimulation();
@@ -172,7 +175,7 @@ public class SandSimulation : MonoBehaviour
         if (!isSimulationSleeping)
         {
             isSimulationSleeping = true;
-            Debug.Log("<color=#7f8c8d><b>[SandSimulation]</b> 💤 ฟิสิกส์ทรายสงบนิ่งสนิทแล้ว... สั่งปิดลูปและล็อคสีทราย</color>");
+            Debug.Log("<color=#7f8c8d><b>[SandSimulation]</b> 💤 ฟิสิกส์และระดับสีทรายนิ่งสนิทแล้ว... สั่งปิดลูปการคำนวณชั่วคราว</color>");
         }
     }
 
@@ -181,7 +184,7 @@ public class SandSimulation : MonoBehaviour
         if (isSimulationSleeping)
         {
             isSimulationSleeping = false;
-            Debug.Log("<color=#f39c12><b>[SandSimulation]</b> ⚡ มีมวลสารขยับตัว! ปลุกระบบฟิสิกส์ถล่มให้ตื่นขึ้นมาคำนวณใหม่</color>");
+            Debug.Log("<color=#f39c12><b>[SandSimulation]</b> ⚡ ปลุกระบบฟิสิกส์และตัวอัปเดตสีทรายให้ตื่นขึ้นมาคำนวณ</color>");
         }
     }
 
@@ -194,7 +197,7 @@ public class SandSimulation : MonoBehaviour
     {
         if (sandMoisture != null && index >= 0 && index < sandMoisture.Length)
         {
-            if (sandMoisture[index] < 0.9f && isSimulationSleeping) WakeUpSimulation();
+            if (sandMoisture[index] < 0.9f) WakeUpSimulation();
             sandMoisture[index] = moistureValue;
         }
     }
@@ -206,7 +209,6 @@ public class SandSimulation : MonoBehaviour
 
         WakeUpSimulation();
 
-        // 🚨 🪐 เททรายปุ๊บ ปลุกระบบน้ำให้ตื่นมาคำนวณปริมาตรการล้นของน้ำทันที
         if (cachedWaterSys != null) cachedWaterSys.WakeUpSimulation();
 
         for (int i = 0; i < mainVertexCount; i++)
@@ -221,7 +223,7 @@ public class SandSimulation : MonoBehaviour
 
                 AddSandToColumn(i, sandTypeIndex, addedThickness);
 
-                // เททรายใหม่ลงมาจะเป็นทรายแห้ง (ถ้ามันร่วงลงใต้น้ำ เดี๋ยวลูป Update ถัดไปจะรู้ตัวแล้วปรับให้เปียกเองอย่างไว!)
+                // ทรายที่เทลงไปใหม่จะเริ่มจากแห้ง (0) แล้วระบบใน Update เจอน้ำจะเร่งให้เปียก (1) เองอย่างรวดเร็ว
                 sandMoisture[i] = 0f;
             }
         }
@@ -585,6 +587,7 @@ public class SandSimulation : MonoBehaviour
             currentIter++;
         }
 
+        // บังคับคำนวณสีก่อน Sleep
         UpdateMesh();
         GoToSleepSimulation();
         Debug.Log($"<color=#27ae60><b>[SandSimulation]</b> ✅ ทรายสงบนิ่งแล้ว (ใช้ไป {currentIter} รอบการคำนวณ)</color>");

@@ -54,6 +54,10 @@ public class CameraModeController : MonoBehaviour
 
     private SideScrollCamera playerCamScript;
 
+    // 🚨 ตัวแปรใหม่สำหรับตั้งเวลากระตุ้นทราย
+    private float sandWakeTimer = 0f;
+    private float sandWakeInterval = 0.5f; // กระตุ้นทุกๆ ครึ่งวินาที (ปรับค่าได้ตามต้องการ)
+
     void Start()
     {
         if (mainCamera != null)
@@ -79,6 +83,21 @@ public class CameraModeController : MonoBehaviour
         {
             if (isEditingMode) ExitEditMode();
             else if (isViewingMode) ExitViewMode();
+        }
+
+        // 🚨 ของใหม่: ตั้งเวลาให้กระตุ้นการคำนวณทรายเป็นระยะๆ แทนการทำทุกเฟรม (ประหยัด CPU)
+        if (isEditingMode && selectedTank != null)
+        {
+            sandWakeTimer += Time.deltaTime;
+            if (sandWakeTimer >= sandWakeInterval)
+            {
+                sandWakeTimer = 0f;
+                SandSimulation sandSim = selectedTank.GetComponentInChildren<SandSimulation>();
+                if (sandSim != null)
+                {
+                    sandSim.WakeUpSimulation();
+                }
+            }
         }
 
         if (!isViewingMode)
@@ -225,7 +244,7 @@ public class CameraModeController : MonoBehaviour
         }
         if (tankInfoUI != null) tankInfoUI.HideInfo();
 
-        SettlePhysics(); // สั่งรีเซ็ตฟิสิกส์วัตถุในตู้เฉยๆ ไม่ยุ่งกับตำแหน่งผู้เล่น
+        SettlePhysics();
         Debug.Log("🚶 ย้อนกลับ: โหมดเดินปกติ (Walking Mode)");
     }
 
@@ -263,7 +282,6 @@ public class CameraModeController : MonoBehaviour
         else EnterEditMode();
     }
 
-    // 🚨 ปรับปรุง: ลบส่วนที่ยกตัวผู้เล่นออก เหลือเพียงการล้างแรงกระแทก (Momentum)
     private void SettlePhysics()
     {
         if (selectedTank != null)
@@ -275,7 +293,6 @@ public class CameraModeController : MonoBehaviour
             if (water != null) water.ForceSettlePhysics();
         }
 
-        // ล้างความเร็วตัวละคร เผื่อมีแรงค้างตอนเปิด Object กลับมา
         if (playerCharacter != null)
         {
             Rigidbody rb = playerCharacter.GetComponent<Rigidbody>();

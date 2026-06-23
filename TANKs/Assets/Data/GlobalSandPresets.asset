@@ -19,8 +19,8 @@ MonoBehaviour:
   wetDarknessMultiplier: 0.3
   sandTypes:
   - sandName: White Sand
-    maxSlopeAngle: 0.3
-    flowRate: 20
+    maxSlopeAngle: 0
+    flowRate: 30
     sandColor: {r: 0.85660374, g: 0.75294167, b: 0.66427195, a: 1}
     staticFriction: 0.005
   - sandName: Blue Sand

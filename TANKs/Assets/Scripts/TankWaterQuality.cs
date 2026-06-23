@@ -34,31 +34,28 @@ public class TankWaterQuality : MonoBehaviour
     private WaterSystem waterSim;
 
     [Header("⚙️ ตั้งค่าการจำลอง (Simulation Settings)")]
+    [Tooltip("อัปเดตความเปลี่ยนแปลงทุกๆ กี่วินาทีในชีวิตจริง? (แนะนำ 1-2 วิ เพื่อประหยัด CPU)")]
     public float simulationInterval = 1.0f;
-
-    [Header("🛠️ Debug Fast Forward")]
-    public float timeMultiplier = 1.0f;
+    private float realTickTimer = 0f;
 
     [Header("📈 เกณฑ์ระบบนิเวศมาตรฐาน")]
     public float maxBacteriaCap = 100f;
     public float targetNaturalPH = 7.2f;
 
-    private float tickTimer = 0f;
+    [Header("🦠 ความเร็วระบบนิเวศ (หน่วย: ต่อ 1 ชั่วโมงในเกม)")]
+    [Tooltip("แบคทีเรียเพิ่มขึ้นกี่หน่วย ต่อ 1 ชั่วโมงในเกม")]
+    public float baseBacteriaGrowthRate = 0.5f;
+
+    [Tooltip("ของเสียลดลงกี่หน่วย ต่อ 1 ชั่วโมงในเกม (ถ้ามีแบคทีเรียช่วยย่อย)")]
+    public float bacteriaEfficiency = 0.1f;
 
     [Header("🎨 การแสดงผลสีน้ำ (Water Visual Settings)")]
-    [Tooltip("สีของน้ำตอนที่ใสสะอาด 100% (น้ำเงินเข้มเกือบดำ)")]
     public Color clearWaterColor = new Color(0.02f, 0.05f, 0.15f);
-
-    [Tooltip("สีของน้ำตอนที่มีฝุ่นทรายขุ่น 100%")]
     public Color murkyWaterColor = new Color(0.5f, 0.4f, 0.2f);
-
-    [Tooltip("สีของน้ำตอนที่ของเสีย/ไนโตรเจนเป็นพิษจัดๆ")]
     public Color toxicWaterColor = new Color(0.2f, 0.5f, 0.2f);
 
     [Space(10)]
-    [Tooltip("ชื่อ Property สีใน Shader ของคุณ")]
     public string shaderColorPropertyName = "_WaterTint";
-
     private Material waterMaterial;
 
     void Start()
@@ -70,10 +67,7 @@ public class TankWaterQuality : MonoBehaviour
         if (waterSim != null)
         {
             MeshRenderer mr = waterSim.GetComponent<MeshRenderer>();
-            if (mr != null)
-            {
-                waterMaterial = mr.material;
-            }
+            if (mr != null) waterMaterial = mr.material;
         }
 
         if (gridGen != null)
@@ -92,21 +86,35 @@ public class TankWaterQuality : MonoBehaviour
         }
 
         turbidity = 0f;
-        tickTimer = Random.Range(0f, simulationInterval);
+        realTickTimer = 0f;
 
         UpdateWaterVisuals();
     }
 
     void Update()
     {
-        tickTimer += Time.deltaTime;
+        float safeDeltaTime = Mathf.Min(Time.deltaTime, 0.1f);
+        realTickTimer += safeDeltaTime;
 
-        if (tickTimer >= simulationInterval)
+        if (realTickTimer >= simulationInterval)
         {
             UpdatePhysicalVolumes();
-            ProcessEcosystemStep(simulationInterval * timeMultiplier);
+
+            float currentSpeed = (TimeManager.Instance != null) ? TimeManager.Instance.timeScale : 1.0f;
+            float inGameHoursPassed = (realTickTimer * currentSpeed) / 3600f;
+
+            if (inGameHoursPassed > 1.0f)
+            {
+                PassTime(inGameHoursPassed);
+            }
+            else
+            {
+                ProcessEcosystemStep(inGameHoursPassed);
+            }
+
             UpdateWaterVisuals();
-            tickTimer = 0f;
+
+            realTickTimer = 0f;
         }
     }
 
@@ -118,7 +126,6 @@ public class TankWaterQuality : MonoBehaviour
         int mainVertCount = gridGen.gridXCount * gridGen.gridZCount;
         float exactCellArea = tankBaseArea / mainVertCount;
 
-        // 1. คำนวณปริมาณวัสดุรองพื้น (ทราย)
         Vector3[] sVerts = null;
         if (sandSim != null)
         {
@@ -135,7 +142,6 @@ public class TankWaterQuality : MonoBehaviour
             }
         }
 
-        // 2. คำนวณปริมาณน้ำ (🚨 แก้ไข: หักลบความสูงพื้นทรายออก เพื่อให้ได้มวลน้ำจริง)
         if (waterSim != null)
         {
             MeshRenderer waterMR = waterSim.GetComponent<MeshRenderer>();
@@ -148,10 +154,7 @@ public class TankWaterQuality : MonoBehaviour
 
                 for (int i = 0; i < mainVertCount && i < wVerts.Length; i++)
                 {
-                    // อ่านความสูงของทราย ณ พิกัดเดียวกัน (ถ้าจุดนั้นไม่มีทรายให้เป็น 0)
                     float sandHeightAtVertex = (sVerts != null && i < sVerts.Length) ? sVerts[i].y : 0f;
-
-                    // ความหนาของน้ำที่แท้จริง = ระดับผิวน้ำรวม - ระดับพื้นทราย
                     float actualWaterThickness = wVerts[i].y - sandHeightAtVertex;
 
                     if (actualWaterThickness > 0.0001f)
@@ -170,12 +173,21 @@ public class TankWaterQuality : MonoBehaviour
         }
     }
 
+    // 🚨 ฟังก์ชันใหม่: คำนวณ "แฟกเตอร์การเจือจาง"
+    // ถ้าปริมาณน้ำเท่ากับ 35 ลิตร (ตู้มาตรฐาน) ค่าจะเท่ากับ 1.0 (แกว่งปกติ)
+    // ถ้าน้ำน้อยกว่า 35 ลิตร ค่าจะ > 1.0 (เช่น ตู้ 7 ลิตร จะแกว่งไว 5 เท่า)
+    // ถ้าน้ำมากกว่า 35 ลิตร ค่าจะ < 1.0 (เช่น ตู้ 70 ลิตร จะเสถียรขึ้น 2 เท่า)
+    private float GetDilutionFactor()
+    {
+        if (waterVolumeLiters <= 0f) return 1f;
+        return Mathf.Clamp(35f / waterVolumeLiters, 0.1f, 10f);
+    }
+
     [Header("🤢 ระบบของเสียและสารพิษ (Waste & Nitrogen System)")]
     public float waste = 0f;
     public float nitrogen = 0f;
-    public float bacteriaEfficiency = 0.2f;
 
-    private void ProcessEcosystemStep(float simDeltaTime)
+    private void ProcessEcosystemStep(float inGameHours)
     {
         if (waterVolumeLiters <= 0f)
         {
@@ -188,68 +200,77 @@ public class TankWaterQuality : MonoBehaviour
             return;
         }
 
+        float dilutionFactor = GetDilutionFactor();
         float waterVolumeFactor = Mathf.Clamp(waterVolumeLiters / 35f, 0.2f, 4.0f);
 
-        if ((turbidity > 0f || currentSandVolume_M3 > 0f || waste > 0f) && bacteria < maxBacteriaCap)
-        {
-            float baseGrowthRate = 0.05f;
-            float foodBonus = 1f + (waste * 0.1f);
-            float homeBonus = 1f + (sandVolumeLiters * 0.05f);
-
-            bacteria += baseGrowthRate * waterVolumeFactor * foodBonus * homeBonus * simDeltaTime;
-            bacteria = Mathf.Clamp(bacteria, 0f, maxBacteriaCap);
-        }
-
-        float totalProcessingPower = bacteria * bacteriaEfficiency * simDeltaTime;
+        // 1. ย่อยสลายของเสีย
+        float totalProcessingPower = bacteria * bacteriaEfficiency * inGameHours;
 
         if (waste > 0f)
         {
-            if (waste <= totalProcessingPower)
-            {
-                waste = 0f;
-                nitrogen = Mathf.MoveTowards(nitrogen, 0f, totalProcessingPower * 0.5f);
-            }
-            else
-            {
-                waste -= totalProcessingPower;
-                float convertedToxic = waste * 0.25f * simDeltaTime;
-                waste -= convertedToxic;
-                nitrogen += convertedToxic;
-            }
+            float processedWaste = Mathf.Min(waste, totalProcessingPower);
+            waste -= processedWaste;
+            nitrogen += processedWaste * 0.5f;
         }
         else
         {
             nitrogen = Mathf.MoveTowards(nitrogen, 0f, totalProcessingPower * 0.2f);
         }
 
-        if (bacteria > 1f && bacteria < maxBacteriaCap * 0.75f)
+        // 2. แบคทีเรียเติบโต & อดอาหาร
+        if (waste > 0f)
         {
-            float bloomRate = 0.5f;
-            turbidity += bloomRate * simDeltaTime;
-        }
-        else if (bacteria >= maxBacteriaCap * 0.75f)
-        {
-            float clarityPower = 1.0f;
-            turbidity -= clarityPower * simDeltaTime;
-        }
-        else if (turbidity > 0f)
-        {
-            turbidity -= 0.1f * simDeltaTime;
-        }
+            if (bacteria < maxBacteriaCap)
+            {
+                float activeBacteria = bacteria > 0f ? bacteria : 0.1f;
+                float foodBonus = 1f + (waste * 0.05f);
+                float homeBonus = 1f + (sandVolumeLiters * 0.01f);
+                float populationBonus = 1f + (activeBacteria * 0.01f);
 
-        turbidity = Mathf.Clamp(turbidity, 0f, 100f);
-
-        if (nitrogen > 0.05f)
-        {
-            ph = Mathf.MoveTowards(ph, 5.5f, nitrogen * 0.01f * simDeltaTime);
-        }
-        else if (currentSandVolume_M3 > 0f || bacteria > 5f)
-        {
-            ph = Mathf.MoveTowards(ph, targetNaturalPH, 0.005f * simDeltaTime);
+                bacteria += baseBacteriaGrowthRate * waterVolumeFactor * foodBonus * homeBonus * populationBonus * inGameHours;
+                bacteria = Mathf.Clamp(bacteria, 0f, maxBacteriaCap);
+            }
         }
         else
         {
-            ph = Mathf.MoveTowards(ph, 7.0f, 0.01f * simDeltaTime);
+            if (bacteria > 5.0f)
+            {
+                float starveRate = baseBacteriaGrowthRate * 0.2f;
+                bacteria -= starveRate * inGameHours;
+                bacteria = Mathf.Max(bacteria, 5.0f);
+            }
+        }
+
+        // 3. ความขุ่นของน้ำ
+        float targetTurbidity = Mathf.Clamp(waste * 2f, 0f, 30f);
+
+        float bloomRatio = bacteria / maxBacteriaCap;
+        if (bloomRatio > 0.05f && bloomRatio < 0.75f)
+        {
+            float bellCurve = Mathf.Sin(Mathf.InverseLerp(0.05f, 0.75f, bloomRatio) * Mathf.PI);
+            targetTurbidity += bellCurve * 60f;
+        }
+
+        // 🚨 น้ำน้อยจะขุ่นไวและใสไวกว่าน้ำเยอะ (คูณ dilutionFactor)
+        float turbidityChangeSpeed = 5.0f * dilutionFactor;
+        turbidity = Mathf.MoveTowards(turbidity, targetTurbidity, turbidityChangeSpeed * inGameHours);
+        turbidity = Mathf.Clamp(turbidity, 0f, 100f);
+
+        // 4. การจัดการค่า pH
+        if (nitrogen > 0.05f)
+        {
+            // 🚨 ถ้าไนโตรเจนสูง pH จะร่วง (ตู้เล็ก pH ร่วงง่ายและไวกว่า)
+            float phDrop = Mathf.Clamp(nitrogen * 0.01f, 0f, 0.05f * dilutionFactor);
+            ph = Mathf.MoveTowards(ph, 5.5f, phDrop * inGameHours);
+        }
+        else if (currentSandVolume_M3 > 0f || bacteria > 5f)
+        {
+            // 🚨 ตู้เล็ก ฟื้นฟู pH ไวกว่า
+            ph = Mathf.MoveTowards(ph, targetNaturalPH, 0.02f * dilutionFactor * inGameHours);
+        }
+        else
+        {
+            ph = Mathf.MoveTowards(ph, 7.0f, 0.02f * dilutionFactor * inGameHours);
         }
     }
 
@@ -258,8 +279,6 @@ public class TankWaterQuality : MonoBehaviour
         if (waterMaterial == null) return;
 
         float turbidityRatio = turbidity / 100f;
-
-        // ผสมเฉพาะสี RGB ไปส่งให้ Shader
         Color targetColor = Color.Lerp(clearWaterColor, murkyWaterColor, turbidityRatio);
 
         if (nitrogen > 0f)
@@ -278,28 +297,55 @@ public class TankWaterQuality : MonoBehaviour
     {
         if (hoursToSkip <= 0f) return;
 
-        float totalSeconds = hoursToSkip * 3600f;
-        float timeSlice = 60f;
-        int steps = Mathf.CeilToInt(totalSeconds / timeSlice);
-        float remainingTime = totalSeconds;
+        int steps = Mathf.CeilToInt(hoursToSkip);
+        float remainingHours = hoursToSkip;
 
         for (int i = 0; i < steps; i++)
         {
-            float stepCurrent = Mathf.Min(timeSlice, remainingTime);
-            ProcessEcosystemStep(stepCurrent);
-            remainingTime -= stepCurrent;
+            float stepHours = Mathf.Min(1.0f, remainingHours);
+            ProcessEcosystemStep(stepHours);
+            remainingHours -= stepHours;
         }
 
         UpdateWaterVisuals();
-        Debug.Log($"<color=#f1c40f><b>[TankWaterQuality]</b> ข้ามเวลาไป {hoursToSkip} ชั่วโมง ระบบนิเวศอัปเดตเรียบร้อย!</color>");
+        Debug.Log($"<color=#f1c40f><b>[TankWaterQuality]</b> คำนวณข้ามเวลา {hoursToSkip:F2} ชั่วโมงในเกมเสร็จสิ้น</color>");
     }
+
+    // ==========================================
+    // 🧪 การเพิ่มมวลสารและของเสียต่างๆ
+    // ==========================================
 
     public void AddWaste(float amount)
     {
         if (waterVolumeLiters > 0f && amount > 0f)
         {
-            waste += amount;
+            // 🚨 ยิ่งตู้เล็ก ของเสียยิ่งเข้มข้นเร็ว
+            waste += amount * GetDilutionFactor();
         }
+    }
+
+    public void AddSalinity(float amount)
+    {
+        if (waterVolumeLiters > 0f)
+        {
+            // 🚨 ยิ่งตู้เล็ก ค่าความเค็มยิ่งเข้มข้นและแกว่งไว
+            salinity += amount * GetDilutionFactor();
+        }
+    }
+
+    public void AddStarterBacteria(float amount)
+    {
+        if (waterVolumeLiters <= 0f)
+        {
+            Debug.LogWarning("[TankWaterQuality] ตู้ยังไม่มีน้ำ เติมจุลินทรีย์ไม่ได้!");
+            return;
+        }
+
+        // 🚨 ยิ่งตู้เล็ก แบคทีเรียยิ่งลามทั่วตู้ไว
+        bacteria += amount * GetDilutionFactor();
+        bacteria = Mathf.Clamp(bacteria, 0f, maxBacteriaCap);
+
+        Debug.Log($"<color=lime>🧪 เติมจุลินทรีย์ตั้งต้น +{amount}! (ค่าปัจจุบัน: {bacteria:F1} / {maxBacteriaCap})</color>");
     }
 
     public void AddWater(float amount_M3)
@@ -309,34 +355,38 @@ public class TankWaterQuality : MonoBehaviour
 
         bool isFirstPour = (waterVolumeLiters <= 0f);
 
-        if (salinity > 0f)
+        // 🚨 ระบบจำลองการเปลี่ยนน้ำ (Water Change)
+        // เมื่อเติมน้ำจืดใหม่ลงไป จะทำให้สารต่างๆ ที่ละลายอยู่ในตู้เกิดการ "เจือจาง" ลดลง!
+        if (waterVolumeLiters > 0f)
         {
-            salinity -= (amountLiters * 0.001f);
-            if (salinity < 0f) salinity = 0f;
+            float newTotalVolume = waterVolumeLiters + amountLiters;
+            float diluteRatio = waterVolumeLiters / newTotalVolume; // สัดส่วนน้ำเก่าต่อน้ำรวม
+
+            waste *= diluteRatio;
+            nitrogen *= diluteRatio;
+            salinity *= diluteRatio;
+            turbidity *= diluteRatio; // เติมน้ำใหม่ปุ๊บ น้ำจะใสขึ้นทันที!
         }
+
+        UpdatePhysicalVolumes();
 
         if (isFirstPour)
         {
+            bacteria = 5.0f;
             UpdateWaterVisuals();
         }
     }
 
     public void RemoveWater(float amount_M3) { }
 
-    public void AddSalinity(float amount)
-    {
-        if (waterVolumeLiters > 0f) salinity += amount;
-    }
-
     public float GetClarityNormalized()
     {
         if (waterVolumeLiters <= 0f) return 1f;
         return 1f - (turbidity / 100f);
     }
-    // เพิ่มไว้ล่างสุดใน TankWaterQuality.cs
+
     public float GetTotalTankVolumeLiters()
     {
-        // คำนวณปริมาตรรวมของตู้ (กว้าง x ยาว x สูงสุด * 1000 ลิตร)
         return tankBaseArea * tankMaxHeight * 1000f;
     }
 }
