@@ -346,8 +346,8 @@ public class WaterSystem : MonoBehaviour
                 nextWaves[idx] = Mathf.Clamp(updateWaveValue, -maxWaveHeightLimit, maxWaveHeightLimit);
 
                 // 🟢 ถ้าค่าระลอกคลื่นสูงเกินระดับจุลภาค ถือว่าคลื่นยังขยับอยู่ ห้ามเพิ่งหลับชั่วครู่
-                if (Mathf.Abs(nextWaves[idx]) > 0.0001f)
-                {
+                if (Mathf.Abs(nextWaves[idx]) > 0.005f)
+                { // เพิ่มเลข 0 ให้มันยอมรับว่านิ่งได้ง่ายขึ้น
                     wavesAreActive = true;
                 }
             }

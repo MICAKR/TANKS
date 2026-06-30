@@ -1,0 +1,31 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: ddcdd2e197efe1946b8531a1885dcdb5, type: 3}
+  m_Name: Tiger
+  m_EditorClassIdentifier: Assembly-CSharp::FishData
+  speciesName: Tiger
+  adultSize: 4
+  daysToMature: 120
+  baseSpeed: 0.001
+  attackPower: 12
+  hyperLevel: 100
+  baseAggression: 65
+  preferredSchoolSize: 6
+  dietType: 1
+  huntingStyle: 1
+  foodPreference: 4
+  swimZone: 0
+  preferredPH: 7
+  preferredSpaceM3: 0.015
+  compatibleSpecies: []
+  hatedSpecies: []
+  preySpecies: []

@@ -1,4 +1,5 @@
 ﻿using UnityEngine;
+using System.Collections.Generic; // อย่าลืม using System.Collections.Generic นะครับ
 
 public class TankWaterQuality : MonoBehaviour
 {
@@ -57,6 +58,10 @@ public class TankWaterQuality : MonoBehaviour
     [Space(10)]
     public string shaderColorPropertyName = "_WaterTint";
     private Material waterMaterial;
+
+    [Header("🪨 สิ่งกีดขวางในตู้ (Obstacles)")]
+    [Tooltip("ลาก Collider ของหิน ขอนไม้ หรือของตกแต่งในตู้นี้มาใส่ที่นี่ เพื่อให้ปลาว่ายหลบ")]
+    public List<Collider> tankObstacles = new List<Collider>();
 
     void Start()
     {
@@ -173,10 +178,6 @@ public class TankWaterQuality : MonoBehaviour
         }
     }
 
-    // 🚨 ฟังก์ชันใหม่: คำนวณ "แฟกเตอร์การเจือจาง"
-    // ถ้าปริมาณน้ำเท่ากับ 35 ลิตร (ตู้มาตรฐาน) ค่าจะเท่ากับ 1.0 (แกว่งปกติ)
-    // ถ้าน้ำน้อยกว่า 35 ลิตร ค่าจะ > 1.0 (เช่น ตู้ 7 ลิตร จะแกว่งไว 5 เท่า)
-    // ถ้าน้ำมากกว่า 35 ลิตร ค่าจะ < 1.0 (เช่น ตู้ 70 ลิตร จะเสถียรขึ้น 2 เท่า)
     private float GetDilutionFactor()
     {
         if (waterVolumeLiters <= 0f) return 1f;
@@ -251,7 +252,6 @@ public class TankWaterQuality : MonoBehaviour
             targetTurbidity += bellCurve * 60f;
         }
 
-        // 🚨 น้ำน้อยจะขุ่นไวและใสไวกว่าน้ำเยอะ (คูณ dilutionFactor)
         float turbidityChangeSpeed = 5.0f * dilutionFactor;
         turbidity = Mathf.MoveTowards(turbidity, targetTurbidity, turbidityChangeSpeed * inGameHours);
         turbidity = Mathf.Clamp(turbidity, 0f, 100f);
@@ -259,13 +259,11 @@ public class TankWaterQuality : MonoBehaviour
         // 4. การจัดการค่า pH
         if (nitrogen > 0.05f)
         {
-            // 🚨 ถ้าไนโตรเจนสูง pH จะร่วง (ตู้เล็ก pH ร่วงง่ายและไวกว่า)
             float phDrop = Mathf.Clamp(nitrogen * 0.01f, 0f, 0.05f * dilutionFactor);
             ph = Mathf.MoveTowards(ph, 5.5f, phDrop * inGameHours);
         }
         else if (currentSandVolume_M3 > 0f || bacteria > 5f)
         {
-            // 🚨 ตู้เล็ก ฟื้นฟู pH ไวกว่า
             ph = Mathf.MoveTowards(ph, targetNaturalPH, 0.02f * dilutionFactor * inGameHours);
         }
         else
@@ -311,15 +309,10 @@ public class TankWaterQuality : MonoBehaviour
         Debug.Log($"<color=#f1c40f><b>[TankWaterQuality]</b> คำนวณข้ามเวลา {hoursToSkip:F2} ชั่วโมงในเกมเสร็จสิ้น</color>");
     }
 
-    // ==========================================
-    // 🧪 การเพิ่มมวลสารและของเสียต่างๆ
-    // ==========================================
-
     public void AddWaste(float amount)
     {
         if (waterVolumeLiters > 0f && amount > 0f)
         {
-            // 🚨 ยิ่งตู้เล็ก ของเสียยิ่งเข้มข้นเร็ว
             waste += amount * GetDilutionFactor();
         }
     }
@@ -328,7 +321,6 @@ public class TankWaterQuality : MonoBehaviour
     {
         if (waterVolumeLiters > 0f)
         {
-            // 🚨 ยิ่งตู้เล็ก ค่าความเค็มยิ่งเข้มข้นและแกว่งไว
             salinity += amount * GetDilutionFactor();
         }
     }
@@ -341,7 +333,6 @@ public class TankWaterQuality : MonoBehaviour
             return;
         }
 
-        // 🚨 ยิ่งตู้เล็ก แบคทีเรียยิ่งลามทั่วตู้ไว
         bacteria += amount * GetDilutionFactor();
         bacteria = Mathf.Clamp(bacteria, 0f, maxBacteriaCap);
 
@@ -355,17 +346,15 @@ public class TankWaterQuality : MonoBehaviour
 
         bool isFirstPour = (waterVolumeLiters <= 0f);
 
-        // 🚨 ระบบจำลองการเปลี่ยนน้ำ (Water Change)
-        // เมื่อเติมน้ำจืดใหม่ลงไป จะทำให้สารต่างๆ ที่ละลายอยู่ในตู้เกิดการ "เจือจาง" ลดลง!
         if (waterVolumeLiters > 0f)
         {
             float newTotalVolume = waterVolumeLiters + amountLiters;
-            float diluteRatio = waterVolumeLiters / newTotalVolume; // สัดส่วนน้ำเก่าต่อน้ำรวม
+            float diluteRatio = waterVolumeLiters / newTotalVolume;
 
             waste *= diluteRatio;
             nitrogen *= diluteRatio;
             salinity *= diluteRatio;
-            turbidity *= diluteRatio; // เติมน้ำใหม่ปุ๊บ น้ำจะใสขึ้นทันที!
+            turbidity *= diluteRatio;
         }
 
         UpdatePhysicalVolumes();
