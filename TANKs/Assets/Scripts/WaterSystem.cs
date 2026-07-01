@@ -12,7 +12,6 @@ public class WaterSystem : MonoBehaviour
     [Tooltip("ความเร็วในการไหลแผ่กระจายของน้ำ (ปรับได้ 30 - 60 ยิ่งเยอะน้ำยิ่งแบนราบเรียบไวขึ้น)")]
     public float waterFlowRate = 40.0f;
 
-    // เพดานความสูงตู้ปลาสัมบูรณ์จากพื้นตู้ (เมตร) ดึงค่ามาจาก SandGridGenerator
     private float maxWaterHeight = 0.4f;
 
     [Header("🌊 Dynamic Wave Settings (ระบบระลอกคลื่นสะท้อน)")]
@@ -47,7 +46,6 @@ public class WaterSystem : MonoBehaviour
     private int[] perimeterIndices;
     private float skirtDepth = -0.05f;
 
-    // 🚨 🪐 [ระบบคุมการหลับ/ตื่นฟิสิกส์ของเหลว]
     private bool isSimulationSleeping = false;
 
     void Start()
@@ -97,7 +95,6 @@ public class WaterSystem : MonoBehaviour
         System.Array.Copy(baseVertices, currentVertices, baseVertices.Length);
 
         waterThicknesses = new float[mainVertexCount];
-
         currentWaves = new float[mainVertexCount];
         previousWaves = new float[mainVertexCount];
         nextWaves = new float[mainVertexCount];
@@ -105,7 +102,6 @@ public class WaterSystem : MonoBehaviour
 
     void Update()
     {
-        // 🚨 🪐 ถ้าระบบน้ำแผ่ราบและคลื่นนิ่งสนิทจนสั่ง Sleep ไปแล้ว ให้หยุดข้ามกระบวนการลูปคำนวณทันทีเพื่อรีดสปีดเครื่อง
         if (isSimulationSleeping) return;
 
         tickTimer += Time.deltaTime;
@@ -113,9 +109,10 @@ public class WaterSystem : MonoBehaviour
         {
             bool waterMoved = ApplyWaterFlowEffect(tickTimer);
             bool wavesActive = ApplyWaveSimulation();
+
+            // อัปเดตพิกัดน้ำอย่างเดียว (ไม่ต้องปลุกระบบสีทรายแล้ว)
             UpdateMesh();
 
-            // 🚨 🪐 [เช็คจุดสลบผิวน้ำ] ถ้าน้ำไม่มีการขยับตัว และ คลื่นสลายตัวนิ่งสนิทแล้ว สั่งปิดเครื่องนอนทันที
             if (!waterMoved && !wavesActive)
             {
                 GoToSleepSimulation();
@@ -125,7 +122,6 @@ public class WaterSystem : MonoBehaviour
         }
     }
 
-    // 💤 สั่งตัดกระแสไฟฟิสิกส์ระบบน้ำเข้าโหมดจำศีล
     private void GoToSleepSimulation()
     {
         if (!isSimulationSleeping)
@@ -135,7 +131,6 @@ public class WaterSystem : MonoBehaviour
         }
     }
 
-    // ⚡ ปลุกระบบน้ำให้ตื่นขึ้นมาแผ่มลสารและทำระลอกคลื่นใหม่
     public void WakeUpSimulation()
     {
         if (isSimulationSleeping)
@@ -147,7 +142,6 @@ public class WaterSystem : MonoBehaviour
 
     public void PourWater(Vector3 hitPoint, float brushRadius, float pourSpeed)
     {
-        // 🚨 ปลุกระบบน้ำทันทีที่มีการเติมน้ำใหม่ลงตู้
         WakeUpSimulation();
 
         float densityMultiplier = 0.01f / currentCellSize;
@@ -181,7 +175,6 @@ public class WaterSystem : MonoBehaviour
 
     public void VacuumWater(Vector3 hitPoint, float brushRadius, float vacuumSpeed)
     {
-        // 🚨 ปลุกระบบน้ำทันทีที่มีการดูดลบมวลน้ำออก
         WakeUpSimulation();
 
         float densityMultiplier = 0.01f / currentCellSize;
@@ -204,7 +197,6 @@ public class WaterSystem : MonoBehaviour
         }
     }
 
-    // 🚨 ปรับให้ส่งค่ากลับเป็น bool เพื่อส่งสัญญาณบอก Update ว่าน้ำเฟรมนี้ยังไหลอยู่ไหม
     private bool ApplyWaterFlowEffect(float simDeltaTime)
     {
         if (waterThicknesses == null || waterThicknesses.Length == 0) return false;
@@ -298,7 +290,6 @@ public class WaterSystem : MonoBehaviour
         return globalWaterMoved;
     }
 
-    // 🚨 ปรับให้ส่งค่ากลับเป็น bool เพื่อเช็คว่าพิกัดคลื่นยังคงสั่นไหวระลอกคลื่นอยู่ไหม
     private bool ApplyWaveSimulation()
     {
         int[] wdx = { -1, 1, 0, 0 };
@@ -345,9 +336,8 @@ public class WaterSystem : MonoBehaviour
 
                 nextWaves[idx] = Mathf.Clamp(updateWaveValue, -maxWaveHeightLimit, maxWaveHeightLimit);
 
-                // 🟢 ถ้าค่าระลอกคลื่นสูงเกินระดับจุลภาค ถือว่าคลื่นยังขยับอยู่ ห้ามเพิ่งหลับชั่วครู่
                 if (Mathf.Abs(nextWaves[idx]) > 0.005f)
-                { // เพิ่มเลข 0 ให้มันยอมรับว่านิ่งได้ง่ายขึ้น
+                {
                     wavesAreActive = true;
                 }
             }
@@ -377,11 +367,7 @@ public class WaterSystem : MonoBehaviour
                 if (targetWaterY > maxWaterHeight) targetWaterY = maxWaterHeight;
 
                 currentVertices[i].y = targetWaterY;
-
-                if (cachedSandSim != null)
-                {
-                    cachedSandSim.MakeWet(i, 1.0f);
-                }
+                // 🌟 ลบ cachedSandSim.MakeWet(i, 1.0f); ทิ้ง ไม่ให้มันไปกวนระบบสีทรายอีก
             }
             else
             {
@@ -429,9 +415,7 @@ public class WaterSystem : MonoBehaviour
         }
         return 0f;
     }
-    // ... [โค้ดเดิมด้านบนทั้งหมด] ...
 
-    // 🚨 🪐 ฟังก์ชันใหม่: สั่งเร่งเวลาฟิสิกส์น้ำให้ราบเรียบและคลื่นนิ่งสนิทในพริบตา
     public void ForceSettlePhysics()
     {
         Debug.Log("<color=#3498db><b>[WaterSystem]</b> ⏳ สั่งเร่งความเร็วฟิสิกส์ของเหลวให้เข้าสู่สมดุล...</color>");
@@ -441,7 +425,6 @@ public class WaterSystem : MonoBehaviour
         bool stillMoving = true;
         bool wavesActive = true;
 
-        // จำลองเวลาเฟรมละ 0.1 วิ (เร็วกว่าปกติ 5 เท่า) เพื่อเคลียร์คลื่นและน้ำให้เรียบ
         while ((stillMoving || wavesActive) && currentIter < maxIterations)
         {
             stillMoving = ApplyWaterFlowEffect(0.1f);
@@ -449,7 +432,6 @@ public class WaterSystem : MonoBehaviour
             currentIter++;
         }
 
-        // รีเซ็ตคลื่นให้เป็น 0 ไปเลยเพื่อความชัวร์ว่านิ่งกริ๊บ
         for (int i = 0; i < currentWaves.Length; i++)
         {
             currentWaves[i] = 0f;
@@ -461,5 +443,4 @@ public class WaterSystem : MonoBehaviour
         GoToSleepSimulation();
         Debug.Log($"<color=#2ecc71><b>[WaterSystem]</b> ✅ ผิวน้ำสงบนิ่งแล้ว (ใช้ไป {currentIter} รอบการคำนวณ)</color>");
     }
-
 }

@@ -36,20 +36,50 @@ public class TankAIManager : MonoBehaviour
         if (tank == null) return currentPos;
 
         Bounds b = tank.GetComponent<Collider>().bounds;
+        Random.InitState((int)(System.DateTime.Now.Ticks + currentPos.x * 1000));
+
+        // 🌟 1. ปลดล็อกข้อจำกัดเวลาน้ำน้อย
+        SwimZone effectiveZone = zone;
+        if (waterQuality != null)
+        {
+            // คำนวณความจุน้ำสูงสุดที่ตู้รับได้ (ความจุรวม - ปริมาตรทราย)
+            float maxWaterCapacity = waterQuality.GetTotalTankVolumeLiters() - waterQuality.sandVolumeLiters;
+
+            // ถ้าน้ำมีน้อยกว่า 50% ของความจุ ให้บังคับปลาว่ายทั่วตู้ (All) ไปเลย จะได้ไม่อึดอัดอยู่แค่ตรงกลาง
+            if (waterQuality.waterVolumeLiters < maxWaterCapacity * 0.5f)
+            {
+                effectiveZone = SwimZone.All;
+            }
+        }
 
         for (int i = 0; i < 5; i++)
         {
-            // 🌟 เพิ่มการสุ่มแบบกระจายตัว (แทนที่จะสุ่มกลางตู้)
-            // ใช้วิธีสุ่มระยะห่างจากขอบ (Margin) มากกว่าสุ่มจากกึ่งกลาง
-            float margin = 0.2f;
-            float randomX = Random.value < 0.5f ? Random.Range(b.min.x + 0.1f, b.min.x + margin) : Random.Range(b.max.x - margin, b.max.x - 0.1f);
-            float randomZ = Random.value < 0.5f ? Random.Range(b.min.z + 0.1f, b.min.z + margin) : Random.Range(b.max.z - margin, b.max.z - 0.1f);
+            // 🌟 2. กระจายจุดว่ายน้ำให้ออกไปเลาะขอบตู้มากขึ้น
+            float margin = 0.05f; // ระยะขอบ (ห่างจากกระจกนิดหน่อยกันชน)
+            float randomX = 0f;
+            float randomZ = 0f;
 
-            // บางครั้งสุ่มกลางตู้บ้าง (20% ของเวลา) เพื่อให้มันว่ายตัดบ้าง
-            if (Random.value < 0.2f)
+            // เพิ่มโอกาส 60% ที่ปลาจะเจาะจงว่ายไปริมกระจกด้านใดด้านหนึ่ง
+            if (Random.value < 0.6f)
             {
-                randomX = Random.Range(b.min.x + 0.2f, b.max.x - 0.2f);
-                randomZ = Random.Range(b.min.z + 0.2f, b.max.z - 0.2f);
+                if (Random.value < 0.5f)
+                {
+                    // ชิดขอบซ้าย หรือ ขอบขวา
+                    randomX = Random.value < 0.5f ? Random.Range(b.min.x + margin, b.min.x + 0.15f) : Random.Range(b.max.x - 0.15f, b.max.x - margin);
+                    randomZ = Random.Range(b.min.z + margin, b.max.z - margin);
+                }
+                else
+                {
+                    // ชิดขอบหน้า หรือ ขอบหลัง
+                    randomX = Random.Range(b.min.x + margin, b.max.x - margin);
+                    randomZ = Random.value < 0.5f ? Random.Range(b.min.z + margin, b.min.z + 0.15f) : Random.Range(b.max.z - 0.15f, b.max.z - margin);
+                }
+            }
+            else
+            {
+                // โอกาส 40% ว่ายตัดกลางตู้ปกติ
+                randomX = Random.Range(b.min.x + margin, b.max.x - margin);
+                randomZ = Random.Range(b.min.z + margin, b.max.z - margin);
             }
 
             Vector3 randomPoint = new Vector3(randomX, currentPos.y, randomZ);
@@ -57,22 +87,23 @@ public class TankAIManager : MonoBehaviour
             float worldSandY = sandSim != null ? sandSim.GetHeightAtWorldPos(randomPoint) : 0f;
             float worldWaterY = waterSim != null ? waterSim.GetHeightAtWorldPos(randomPoint) : 0.5f;
 
-            // คำนวณ Y ตามโซน
+            // 🌟 3. ใช้ effectiveZone ที่ผ่านการเช็คระดับน้ำมาแล้ว
             float yPos = 0f;
-            switch (zone)
+            switch (effectiveZone)
             {
-                case SwimZone.Bottom: yPos = Random.Range(worldSandY + 0.05f, worldSandY + 0.2f); break;
-                case SwimZone.Surface: yPos = Random.Range(worldWaterY - 0.2f, worldWaterY - 0.05f); break;
-                case SwimZone.Middle: yPos = Mathf.Lerp(worldSandY, worldWaterY, Random.Range(0.4f, 0.6f)); break;
-
+                case SwimZone.Bottom: yPos = Random.Range(worldSandY + 0.02f, worldSandY + 0.15f); break;
+                case SwimZone.Surface: yPos = Random.Range(worldWaterY - 0.08f, worldWaterY - 0.03f); break;
+                case SwimZone.Middle: yPos = Mathf.Lerp(worldSandY, worldWaterY, Random.Range(0.3f, 0.7f)); break;
                 case SwimZone.All: yPos = Mathf.Lerp(worldSandY, worldWaterY, Random.Range(0.1f, 0.9f)); break;
             }
 
-            if (yPos > worldSandY + 0.05f && yPos < worldWaterY - 0.05f)
+            // ถ้าระดับ Y ที่สุ่มได้อยู่ในเขตน้ำปลอดภัย ให้ส่งค่านี้กลับไป
+            if (yPos > worldSandY + 0.03f && yPos < worldWaterY - 0.02f)
             {
                 return new Vector3(randomPoint.x, yPos, randomPoint.z);
             }
         }
+
         return currentPos;
     }
     public FishAI FindPreyFor(FishAI hunter)

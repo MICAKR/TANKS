@@ -54,10 +54,6 @@ public class CameraModeController : MonoBehaviour
 
     private SideScrollCamera playerCamScript;
 
-    // 🚨 ตัวแปรใหม่สำหรับตั้งเวลากระตุ้นทราย
-    private float sandWakeTimer = 0f;
-    private float sandWakeInterval = 0.5f; // กระตุ้นทุกๆ ครึ่งวินาที (ปรับค่าได้ตามต้องการ)
-
     void Start()
     {
         if (mainCamera != null)
@@ -83,21 +79,6 @@ public class CameraModeController : MonoBehaviour
         {
             if (isEditingMode) ExitEditMode();
             else if (isViewingMode) ExitViewMode();
-        }
-
-        // 🚨 ของใหม่: ตั้งเวลาให้กระตุ้นการคำนวณทรายเป็นระยะๆ แทนการทำทุกเฟรม (ประหยัด CPU)
-        if (isEditingMode && selectedTank != null)
-        {
-            sandWakeTimer += Time.deltaTime;
-            if (sandWakeTimer >= sandWakeInterval)
-            {
-                sandWakeTimer = 0f;
-                SandSimulation sandSim = selectedTank.GetComponentInChildren<SandSimulation>();
-                if (sandSim != null)
-                {
-                    sandSim.WakeUpSimulation();
-                }
-            }
         }
 
         if (!isViewingMode)
@@ -226,6 +207,8 @@ public class CameraModeController : MonoBehaviour
         TankWaterQuality tankData = newTank.GetComponentInChildren<TankWaterQuality>();
         if (tankInfoUI != null) tankInfoUI.DisplayTankInfo(tankData);
 
+        ToggleSandOptimization(false); // 🚨 ไม่ได้จัดตู้แล้ว เข้าสู่โหมดประหยัด CPU
+
         Debug.Log("🔍 เข้าสู่: โหมดดูตู้ (View Mode)");
     }
 
@@ -245,6 +228,8 @@ public class CameraModeController : MonoBehaviour
         if (tankInfoUI != null) tankInfoUI.HideInfo();
 
         SettlePhysics();
+        ToggleSandOptimization(false); // 🚨 เผื่อไว้ ปิดโหมดจัดตู้ชัวร์ๆ
+
         Debug.Log("🚶 ย้อนกลับ: โหมดเดินปกติ (Walking Mode)");
     }
 
@@ -258,6 +243,9 @@ public class CameraModeController : MonoBehaviour
             decorationUI.HidePanelByID(1);
             decorationUI.ShowPanelByID(0);
         }
+
+        ToggleSandOptimization(true); // 🚨 เริ่มจัดตู้ เปิดเฟรมเรตสีทรายเต็มที่
+
         Debug.Log("🛠️ เข้าสู่: โหมดแก้ไขตู้ (Edit Mode)");
     }
 
@@ -273,6 +261,8 @@ public class CameraModeController : MonoBehaviour
 
         if (toolManagerRef != null) toolManagerRef.activeTool = ToolManager.CurrentTool.None;
 
+        ToggleSandOptimization(false); // 🚨 เลิกจัดตู้ กลับไปโหมดประหยัด CPU
+
         Debug.Log("🔍 ย้อนกลับ: โหมดดูตู้ (View Mode)");
     }
 
@@ -280,6 +270,17 @@ public class CameraModeController : MonoBehaviour
     {
         if (isEditingMode) ExitEditMode();
         else EnterEditMode();
+    }
+    private void ToggleSandOptimization(bool isEditing)
+    {
+        if (selectedTank != null)
+        {
+            SandSimulation sand = selectedTank.GetComponentInChildren<SandSimulation>();
+            if (sand != null)
+            {
+                sand.SetEditMode(isEditing);
+            }
+        }
     }
 
     private void SettlePhysics()

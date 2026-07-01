@@ -7,7 +7,7 @@ public class SandSimulation : MonoBehaviour
     [System.Serializable]
     public struct SandLayer
     {
-        public int sandTypeIndex;       // รหัส ID ชนิดทราย อิงตามดัชนีในคลังข้อมูลกลาง
+        public int sandTypeIndex;
         public float thickness;
     }
 
@@ -30,6 +30,7 @@ public class SandSimulation : MonoBehaviour
     private Mesh filterMesh;
     private Vector3[] baseVertices;
     private Vector3[] currentVertices;
+    private Color[] currentMeshColors; // 🌟 Cache สีไว้ ไม่สร้างใหม่ทุกเฟรม
     private SandColumn[] sandColumns;
 
     private int gridXCount;
@@ -43,18 +44,25 @@ public class SandSimulation : MonoBehaviour
     private float[] heightSnapshot;
     private float[] sandMoisture;
 
-    private float maxHeightLimit = 0.4f;
+
 
     // ระบบคุมการหลับ/ตื่นฟิสิกส์เพื่อเร่งความเร็วคอม
-    private bool isSimulationSleeping = false;
+   
 
-    // 🚨 🪐 เก็บ Reference ระบบน้ำเอาไว้ให้ทรายถามข้อมูลได้ตลอดเวลา
+    private float maxHeightLimit = 0.4f;
+    private bool isSimulationSleeping = false;
     private WaterSystem cachedWaterSys;
+
+    // 🚨 🪐 ตัวแปรใหม่สำหรับคุมความถี่การระบายสีทราย
+    [Header("Optimization")]
+    public bool isEditModeActive = false; // สถานะว่ากำลังจัดตู้หรือไม่
+    private float colorUpdateTimer = 0f;
+    public float idleColorUpdateInterval = 0.25f; // ลดการอัปเดตเหลือ 4 ครั้ง/วินาที ตอนไม่ได้จัดตู้
 
     private readonly int[] dx = { -1, 1, 0, 0, -1, 1, -1, 1 };
     private readonly int[] dz = { 0, 0, -1, 1, -1, -1, 1, 1 };
     private readonly float[] distMult = { 1f, 1f, 1f, 1f, 1.414f, 1.414f, 1.414f, 1.414f };
-
+   
     void Start()
     {
         SandGridGenerator generator = GetComponent<SandGridGenerator>();
@@ -84,6 +92,7 @@ public class SandSimulation : MonoBehaviour
         baseVertices = filterMesh.vertices;
 
         currentVertices = new Vector3[baseVertices.Length];
+        currentMeshColors = new Color[baseVertices.Length]; // 🌟 เตรียม Array สีไว้ล่วงหน้า
         System.Array.Copy(baseVertices, currentVertices, baseVertices.Length);
 
         sandColumns = new SandColumn[mainVertexCount];
@@ -100,10 +109,55 @@ public class SandSimulation : MonoBehaviour
     {
         if (sandDatabase == null) return;
 
-        float activeDrySpeed = sandDatabase.drySpeed;
-        bool isMoistureChanged = false;
+        // 🌟 คำนวณเวลาและเลือกว่าจะใช้ความถี่แบบไหน
+        colorUpdateTimer += Time.deltaTime;
+        float targetInterval = isEditModeActive ? 0f : idleColorUpdateInterval;
+        bool isColorDirty = false;
 
-        // 🚨 ปรับปรุง: ลูปตรวจสอบและคำนวณความชื้นจะทำงานเสมอ แม้ฟิสิกส์การถล่มจะ Sleep ไปแล้ว
+        // ถ้าระยะเวลาถึงกำหนด (หรือจัดตู้อยู่ = 0) ให้คำนวณสีทราย
+        if (colorUpdateTimer >= targetInterval)
+        {
+            // ส่งค่าเวลาที่สะสมไว้ไปคำนวณ เพื่อให้ทรายแห้ง/เปียกด้วยความเร็วคงที่เสมอ
+            isColorDirty = UpdateMoistureLogic(colorUpdateTimer);
+            colorUpdateTimer = 0f; // รีเซ็ตเวลา
+        }
+
+        bool isPhysicsDirty = false;
+        if (!isSimulationSleeping)
+        {
+            tickTimer += Time.deltaTime;
+            if (tickTimer >= sandDatabase.simulationInterval)
+            {
+                bool avalancheChanged = ApplyAvalancheEffect(tickTimer);
+
+                if (avalancheChanged)
+                {
+                    isPhysicsDirty = true;
+                }
+                else
+                {
+                    GoToSleepSimulation();
+                }
+                tickTimer = 0f;
+            }
+        }
+
+        if (isPhysicsDirty)
+        {
+            UpdatePhysicsMesh();
+            UpdateColorMesh();
+        }
+        else if (isColorDirty)
+        {
+            UpdateColorMesh();
+        }
+    }
+    // 🌟 ระบบคำนวณความชื้น (แยกออกมาต่างหาก)
+    private bool UpdateMoistureLogic(float deltaTime)
+    {
+        float activeDrySpeed = sandDatabase.drySpeed;
+        bool moistureChangedThisFrame = false;
+
         for (int i = 0; i < mainVertexCount; i++)
         {
             bool isUnderwater = false;
@@ -123,59 +177,41 @@ public class SandSimulation : MonoBehaviour
             {
                 if (sandMoisture[i] < 1.0f)
                 {
-                    // ถ้าน้ำท่วมอยู่ แต่ทรายยังเปียกไม่สุด ให้ปลุกระบบขึ้นมาอัปเดตสีแมช
-                    if (isSimulationSleeping) WakeUpSimulation();
-
-                    sandMoisture[i] += 5.0f * Time.deltaTime;
+                    sandMoisture[i] += 5.0f * deltaTime; // ใช้ deltaTime ที่ส่งเข้ามา
                     if (sandMoisture[i] > 1.0f) sandMoisture[i] = 1.0f;
-                    isMoistureChanged = true;
+                    moistureChangedThisFrame = true;
                 }
             }
             else
             {
                 if (sandMoisture[i] > 0f)
                 {
-                    // ถ้าพ้นน้ำและยังแห้งไม่สนิท ให้รันระบบต่อจนกว่าจะแห้ง
-                    if (isSimulationSleeping) WakeUpSimulation();
-
-                    sandMoisture[i] -= activeDrySpeed * Time.deltaTime;
+                    sandMoisture[i] -= activeDrySpeed * deltaTime; // ใช้ deltaTime ที่ส่งเข้ามา
                     if (sandMoisture[i] < 0f) sandMoisture[i] = 0f;
-                    isMoistureChanged = true;
+                    moistureChangedThisFrame = true;
                 }
             }
         }
 
-        // หากระบบฟิสิกส์หลับอยู่ และไม่มีความชื้นเปลี่ยนสีแปลงค่าแล้ว ให้ Skip ลูปถล่มด้านล่างไปได้เลย เพื่อประหยัด CPU
-        if (isSimulationSleeping && !isMoistureChanged) return;
-
-        tickTimer += Time.deltaTime;
-
-        if (tickTimer >= sandDatabase.simulationInterval)
-        {
-            bool avalancheChanged = ApplyAvalancheEffect(tickTimer);
-
-            // อัปเดต Mesh ทุกครั้งที่มีการขยับของมวลทราย หรือระดับสีความชื้นเปลี่ยนไป
-            if (avalancheChanged || isMoistureChanged)
-            {
-                UpdateMesh();
-            }
-
-            // 🚨 บังคับล็อค: ต้องไม่ถล่ม และค่าความเปียกชุ่ม/ระเหย ต้องนิ่งสนิทจริงๆ ถึงจะยอมให้หลับ
-            if (!avalancheChanged && !isMoistureChanged)
-            {
-                GoToSleepSimulation();
-            }
-
-            tickTimer = 0f;
-        }
+        return moistureChangedThisFrame;
     }
 
+    public void SetEditMode(bool active)
+    {
+        isEditModeActive = active;
+        if (active)
+        {
+            // ถ้ากลับมาจัดตู้ ให้เคลียร์เวลาแล้วบังคับระบายสีรอบนึงทันทีเพื่อความสมูท
+            colorUpdateTimer = 0f;
+            UpdateColorMesh();
+        }
+    }
     private void GoToSleepSimulation()
     {
         if (!isSimulationSleeping)
         {
             isSimulationSleeping = true;
-            Debug.Log("<color=#7f8c8d><b>[SandSimulation]</b> 💤 ฟิสิกส์และระดับสีทรายนิ่งสนิทแล้ว... สั่งปิดลูปการคำนวณชั่วคราว</color>");
+            Debug.Log("<color=#7f8c8d><b>[SandSimulation]</b> 💤 มวลทรายเข้าสู่สมดุล... สั่งปิดลูปฟิสิกส์ (แต่สียังรันต่อได้อิสระ)</color>");
         }
     }
 
@@ -184,7 +220,7 @@ public class SandSimulation : MonoBehaviour
         if (isSimulationSleeping)
         {
             isSimulationSleeping = false;
-            Debug.Log("<color=#f39c12><b>[SandSimulation]</b> ⚡ ปลุกระบบฟิสิกส์และตัวอัปเดตสีทรายให้ตื่นขึ้นมาคำนวณ</color>");
+            Debug.Log("<color=#f39c12><b>[SandSimulation]</b> ⚡ ปลุกระบบฟิสิกส์ให้ตื่นขึ้นมาคำนวณมวลทราย</color>");
         }
     }
 
@@ -197,8 +233,8 @@ public class SandSimulation : MonoBehaviour
     {
         if (sandMoisture != null && index >= 0 && index < sandMoisture.Length)
         {
-            if (sandMoisture[index] < 0.9f) WakeUpSimulation();
             sandMoisture[index] = moistureValue;
+            // 🌟 ลบการปลุกฟิสิกส์ทิ้งไป เพราะสีไม่เกี่ยวกับการถล่ม
         }
     }
 
@@ -208,7 +244,6 @@ public class SandSimulation : MonoBehaviour
         sandTypeIndex = Mathf.Clamp(sandTypeIndex, 0, sandDatabase.sandTypes.Length - 1);
 
         WakeUpSimulation();
-
         if (cachedWaterSys != null) cachedWaterSys.WakeUpSimulation();
 
         for (int i = 0; i < mainVertexCount; i++)
@@ -222,18 +257,16 @@ public class SandSimulation : MonoBehaviour
                 float addedThickness = pourSpeed * falloff * Time.deltaTime;
 
                 AddSandToColumn(i, sandTypeIndex, addedThickness);
-
-                // ทรายที่เทลงไปใหม่จะเริ่มจากแห้ง (0) แล้วระบบใน Update เจอน้ำจะเร่งให้เปียก (1) เองอย่างรวดเร็ว
                 sandMoisture[i] = 0f;
             }
         }
-        UpdateMesh();
+        UpdatePhysicsMesh();
+        UpdateColorMesh();
     }
 
     public void VacuumSand(Vector3 hitPoint, float brushRadius, float vacuumSpeed)
     {
         WakeUpSimulation();
-
         if (cachedWaterSys != null) cachedWaterSys.WakeUpSimulation();
 
         for (int i = 0; i < mainVertexCount; i++)
@@ -249,13 +282,13 @@ public class SandSimulation : MonoBehaviour
                 RemoveSandFromColumn(i, removedThickness);
             }
         }
-        UpdateMesh();
+        UpdatePhysicsMesh();
+        UpdateColorMesh();
     }
 
     public void SmoothSand(Vector3 hitPoint, float brushRadius, float smoothSpeed)
     {
         WakeUpSimulation();
-
         if (cachedWaterSys != null) cachedWaterSys.WakeUpSimulation();
 
         float[] tempHeights = new float[mainVertexCount];
@@ -279,7 +312,6 @@ public class SandSimulation : MonoBehaviour
                 if (distance < brushRadius)
                 {
                     float falloff = 1f - (distance / brushRadius);
-
                     float sumHeight = 0f;
                     int neighborCount = 0;
 
@@ -311,12 +343,6 @@ public class SandSimulation : MonoBehaviour
                                 else
                                 {
                                     int fallbackTypeIndex = 0;
-                                    ToolManager toolManager = FindFirstObjectByType<ToolManager>();
-                                    if (toolManager != null)
-                                    {
-                                        fallbackTypeIndex = toolManager.selectedSandTypeIndex;
-                                    }
-
                                     column.layers.Add(new SandLayer { sandTypeIndex = fallbackTypeIndex, thickness = smoothAmount });
                                 }
                             }
@@ -347,7 +373,8 @@ public class SandSimulation : MonoBehaviour
 
         if (hasChanged)
         {
-            UpdateMesh();
+            UpdatePhysicsMesh();
+            UpdateColorMesh();
         }
     }
 
@@ -511,32 +538,12 @@ public class SandSimulation : MonoBehaviour
         return 0f;
     }
 
-    private void UpdateMesh()
+    // 🌟 เปลี่ยนจากการอัปเดตทุกอย่าง ให้เหลือแค่อัปเดตพิกัด (ช่วยลดภาระเครื่อง)
+    private void UpdatePhysicsMesh()
     {
-        if (sandDatabase == null || sandDatabase.sandTypes == null || sandDatabase.sandTypes.Length == 0) return;
-        Color[] meshColors = new Color[currentVertices.Length];
-
-        float activeMultiplier = sandDatabase.wetDarknessMultiplier;
-        Color defaultEmptyColor = sandDatabase.baseDefaultColor;
-
         for (int i = 0; i < mainVertexCount; i++)
         {
             currentVertices[i].y = baseVertices[i].y + sandColumns[i].GetTotalHeight();
-
-            if (sandColumns[i].layers.Count > 0)
-            {
-                SandLayer top = sandColumns[i].layers[sandColumns[i].layers.Count - 1];
-                int typeIdx = Mathf.Clamp(top.sandTypeIndex, 0, sandDatabase.sandTypes.Length - 1);
-
-                Color defaultColor = sandDatabase.sandTypes[typeIdx].sandColor;
-                Color wetColor = new Color(defaultColor.r * activeMultiplier, defaultColor.g * activeMultiplier, defaultColor.b * activeMultiplier, 1f);
-
-                meshColors[i] = Color.Lerp(defaultColor, wetColor, sandMoisture[i]);
-            }
-            else
-            {
-                meshColors[i] = defaultEmptyColor;
-            }
         }
 
         if (perimeterIndices != null && perimeterIndices.Length > 0)
@@ -544,25 +551,12 @@ public class SandSimulation : MonoBehaviour
             for (int i = mainVertexCount; i < currentVertices.Length; i++)
             {
                 currentVertices[i].y = skirtDepth;
-
-                int perimeterIndex = i - mainVertexCount;
-                if (perimeterIndex < perimeterIndices.Length)
-                {
-                    int topVertexIndex = perimeterIndices[perimeterIndex];
-                    meshColors[i] = meshColors[topVertexIndex];
-                }
-                else
-                {
-                    meshColors[i] = defaultEmptyColor;
-                }
             }
         }
 
         filterMesh.vertices = currentVertices;
-        filterMesh.colors = meshColors;
         filterMesh.RecalculateNormals();
         filterMesh.RecalculateTangents();
-
         filterMesh.bounds = new Bounds(Vector3.zero, new Vector3(20f, 20f, 20f));
 
         if (Mouse.current != null && Mouse.current.leftButton.wasReleasedThisFrame)
@@ -571,10 +565,55 @@ public class SandSimulation : MonoBehaviour
         }
     }
 
+    // 🌟 ฟังก์ชันแยกสำหรับระบายสีอย่างเดียวโดยไม่กระทบโครงสร้างฟิสิกส์
+    private void UpdateColorMesh()
+    {
+        if (sandDatabase == null || sandDatabase.sandTypes == null || sandDatabase.sandTypes.Length == 0) return;
+
+        float activeMultiplier = sandDatabase.wetDarknessMultiplier;
+        Color defaultEmptyColor = sandDatabase.baseDefaultColor;
+
+        for (int i = 0; i < mainVertexCount; i++)
+        {
+            if (sandColumns[i].layers.Count > 0)
+            {
+                SandLayer top = sandColumns[i].layers[sandColumns[i].layers.Count - 1];
+                int typeIdx = Mathf.Clamp(top.sandTypeIndex, 0, sandDatabase.sandTypes.Length - 1);
+
+                Color defaultColor = sandDatabase.sandTypes[typeIdx].sandColor;
+                Color wetColor = new Color(defaultColor.r * activeMultiplier, defaultColor.g * activeMultiplier, defaultColor.b * activeMultiplier, 1f);
+
+                currentMeshColors[i] = Color.Lerp(defaultColor, wetColor, sandMoisture[i]);
+            }
+            else
+            {
+                currentMeshColors[i] = defaultEmptyColor;
+            }
+        }
+
+        if (perimeterIndices != null && perimeterIndices.Length > 0)
+        {
+            for (int i = mainVertexCount; i < currentVertices.Length; i++)
+            {
+                int perimeterIndex = i - mainVertexCount;
+                if (perimeterIndex < perimeterIndices.Length)
+                {
+                    int topVertexIndex = perimeterIndices[perimeterIndex];
+                    currentMeshColors[i] = currentMeshColors[topVertexIndex];
+                }
+                else
+                {
+                    currentMeshColors[i] = defaultEmptyColor;
+                }
+            }
+        }
+
+        filterMesh.colors = currentMeshColors;
+    }
+
     public void ForceSettlePhysics()
     {
         if (sandDatabase == null) return;
-
         Debug.Log("<color=#e67e22><b>[SandSimulation]</b> ⏳ สั่งเร่งความเร็วฟิสิกส์ทรายให้เข้าสู่สมดุล...</color>");
 
         int maxIterations = 200;
@@ -587,8 +626,8 @@ public class SandSimulation : MonoBehaviour
             currentIter++;
         }
 
-        // บังคับคำนวณสีก่อน Sleep
-        UpdateMesh();
+        UpdatePhysicsMesh();
+        UpdateColorMesh();
         GoToSleepSimulation();
         Debug.Log($"<color=#27ae60><b>[SandSimulation]</b> ✅ ทรายสงบนิ่งแล้ว (ใช้ไป {currentIter} รอบการคำนวณ)</color>");
     }

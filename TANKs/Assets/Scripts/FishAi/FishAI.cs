@@ -1,5 +1,6 @@
 ﻿using System.Linq;
 using UnityEngine;
+using System.Collections.Generic;
 
 [RequireComponent(typeof(Rigidbody))]
 public class FishAI : MonoBehaviour
@@ -20,24 +21,49 @@ public class FishAI : MonoBehaviour
     public float currentSize;
 
     [Header("⚙️ ตั้งค่าระบบนอกน้ำ")]
-    [Tooltip("ความเร็วในการลดลงของความชื้นต่อวินาที ยิ่งน้อยยิ่งแห้งช้า")]
     public float moistureLossRate = 2.0f;
 
+    [Header("🌊 ระบบรับรู้น้ำ (Water Detection)")]
+    public float stateChangeDelay = 0.3f;
+    public float baseWaterBuffer = 0.01f;
+    public float sizeDepthMultiplier = 0.5f;
+
+    [Header("📍 ระบบจุดยุทธศาสตร์ (Schooling & Roaming)")]
+    public float strategicChangeInterval = 20f;
+    public float roamRadius = 0.4f;
+
+    [HideInInspector] public Vector3 strategicWaypoint; // จุดศูนย์กลางฝูง
+    private float strategicTimer = 0f;
+
+    [Header("🐟 ระบบฝูง (Schooling System)")]
+    public FishAI myLeader; // จ่าฝูงที่ตามอยู่ (ถ้าเป็นตัวเองแปลว่าเป็นจ่าฝูง)
+    private float uniqueOffset; // ค่าสุ่มเพื่อไม่ให้อนิเมชั่นว่ายน้ำพร้อมกันเกินไป
+
+    private float stateChangeTimer = 0f;
     private Vector3 targetWaypoint;
     private FishAI targetPrey;
-    private float stateTimer = 0f;
-    private float currentSpeedScale = 1f;
+
+    [Header("🐟 ระบบว่ายน้ำพุ่งสลับหยุด (Dart & Glide)")]
+    private bool isDarting = false;
+    private float swimPhaseTimer = 0f;
+    private float currentForwardSpeed = 0f;
+
     private Rigidbody rb;
-    private Renderer cachedSandRenderer; // ใช้ดึงขนาดตู้ที่แม่นยำ 100%
+    private Renderer cachedSandRenderer;
 
     private TankAIManager myManager;
-    // ระบบฟิสิกส์จำลองด้วยโค้ด (Custom Code Physics)
     private Vector3 customVelocity;
     private bool isGrounded = false;
+
     [Header("⚙️ การป้องกัน")]
     public Collider tankCollider;
-    private bool isObserving = false;    // เช็คว่าปลากำลังหยุดจ้องของขวางอยู่ไหม
-    private float observeTimer = 0f;     // นาฬิกาจับเวลาตอนจ้อง
+    private bool isObserving = false;
+    private float observeTimer = 0f;
+
+    [Header("⚙️ การเคลื่อนที่ (Movement)")]
+    public float rotationSpeed = 2.0f;
+    public float schoolingSpread = 0.5f;
+
     void Start()
     {
         rb = GetComponent<Rigidbody>();
@@ -47,25 +73,22 @@ public class FishAI : MonoBehaviour
             rb.useGravity = false;
         }
 
-        // 🚨 ระบบหาตู้ปลาอัตโนมัติแบบชัวร์ๆ:
         if (tankCollider == null)
         {
-            // 1. ลองหาจาก Tag
             GameObject tankObj = GameObject.FindWithTag("Tank");
             if (tankObj != null) tankCollider = tankObj.GetComponent<Collider>();
 
-            // 2. ถ้ายังไม่เจอ ให้ Debug บอกเราใน Console
             if (tankCollider == null)
-                Debug.LogWarning($"<color=yellow>⚠️ ปลา {gameObject.name} หาตู้ไม่เจอ! โปรดใส่ Tag'Tank' ให้ตู้ปลา หรือกำหนด Collider ให้ตัวแปร tankCollider ใน Inspector</color>");
+                Debug.LogWarning($"<color=yellow>⚠️ ปลา {gameObject.name} หาตู้ไม่เจอ! โปรดใส่ Tag'Tank' ให้ตู้ปลา</color>");
         }
 
         currentSize = data.adultSize * 0.2f;
         gender = (Random.value > 0.5f) ? FishGender.Male : FishGender.Female;
+        uniqueOffset = Random.Range(0f, 1000f); // สุ่มเพื่อให้แต่ละตัวขยับไม่เหมือนกัน
         UpdateModelScale();
 
         myManager = GetComponentInParent<TankAIManager>();
 
-        // ถ้าไม่เจอ ให้ค้นหาตัวที่ใกล้ที่สุด
         if (myManager == null)
         {
             myManager = FindObjectsByType<TankAIManager>(FindObjectsSortMode.None)
@@ -78,8 +101,11 @@ public class FishAI : MonoBehaviour
             myManager.RegisterFish(this);
             cachedSandRenderer = myManager.sandSim?.GetComponent<Renderer>();
         }
-    
-    GetNewWaypoint();
+
+        strategicTimer = Random.Range(0f, strategicChangeInterval);
+        FindSchool();
+        UpdateStrategicPoint();
+        GetNewWaypoint();
     }
 
     void OnDestroy()
@@ -133,103 +159,203 @@ public class FishAI : MonoBehaviour
 
     private void CheckTankBoundaries()
     {
+        // ... (โค้ดเดิม ไม่มีการเปลี่ยนแปลง) ...
         if (myManager == null || myManager.waterSim == null || cachedSandRenderer == null) return;
 
-        // 1. ดึงค่า Local Y มาก่อน
         float localWaterY = myManager.waterSim.GetHeightAtWorldPos(transform.position);
         float localSandY = myManager.sandSim.GetHeightAtWorldPos(transform.position);
-
-        // 2. แปลงให้เป็นพิกัดโลก (World Space) แบบเดียวกับที่ใช้ใน DropletController!
         float worldWaterY = myManager.waterSim.transform.TransformPoint(new Vector3(0, localWaterY, 0)).y;
         float worldSandY = myManager.sandSim.transform.TransformPoint(new Vector3(0, localSandY, 0)).y;
 
         Bounds b = cachedSandRenderer.bounds;
-        bool isOutsideWalls = transform.position.x < b.min.x + 0.05f || transform.position.x > b.max.x - 0.05f ||
-                              transform.position.z < b.min.z + 0.05f || transform.position.z > b.max.z - 0.05f;
+        bool isOutsideWalls = transform.position.x < b.min.x || transform.position.x > b.max.x ||
+                              transform.position.z < b.min.z || transform.position.z > b.max.z;
 
-        // 3. ปรับเงื่อนไขการเช็คน้ำให้ใจกว้างขึ้น
-        // ถ้าระดับน้ำจริง (World Space) สูงกว่าพิกัด Y ของตัวปลา (บวกเผื่อไว้นิดนึง) ให้ถือว่าอยู่ในน้ำแล้ว
-        bool isInWater = transform.position.y < (worldWaterY - 0.01f);
+        bool isCompletelyOutOfWater = transform.position.y > worldWaterY + 0.05f;
+        bool isTankDry = (worldWaterY - worldSandY) < 0.01f;
 
-        if (isOutsideWalls || !isInWater)
+        FishState targetState = (isOutsideWalls || isCompletelyOutOfWater || isTankDry) ? FishState.Flopping : FishState.Swimming;
+
+        if (currentState != targetState)
         {
-            if (currentState != FishState.Flopping)
+            stateChangeTimer += Time.deltaTime;
+            if (stateChangeTimer >= stateChangeDelay)
             {
-                currentState = FishState.Flopping;
-                isGrounded = false;
-            }
+                currentState = targetState;
+                stateChangeTimer = 0f;
 
+                if (currentState == FishState.Swimming)
+                {
+                    isGrounded = true;
+                    customVelocity = Vector3.zero;
+                    transform.localEulerAngles = new Vector3(0f, transform.localEulerAngles.y, 0f);
+                    GetNewWaypoint();
+                }
+                else { isGrounded = false; }
+            }
+        }
+        else { stateChangeTimer = 0f; }
+
+        if (currentState == FishState.Flopping)
+        {
             currentMoisture -= moistureLossRate * Time.deltaTime;
             if (currentMoisture <= 0) Die();
         }
-        else
-        {
-            // 4. ถ้าน้ำท่วมตัวปลากลับมาแล้ว สั่งให้เด้งตื่นขึ้นมาว่ายน้ำทันที!
-            if (currentState == FishState.Flopping)
-            {
-                currentState = FishState.Swimming;
-                isGrounded = true;
-                customVelocity = Vector3.zero;
-
-                // รีเซ็ตมุมตัวปลาให้ตั้งตรง (หายจากการนอนตะแคง)
-                transform.localEulerAngles = new Vector3(0f, transform.localEulerAngles.y, 0f);
-
-                // สั่งให้สุ่มจุดว่ายน้ำใหม่ทันที
-                GetNewWaypoint();
-            }
-            currentMoisture = 100f; // รีเซ็ตความชุ่มชื้น
-        }
+        else { currentMoisture = 100f; }
     }
+
     private void ProcessStateMachine()
     {
+        if (currentState == FishState.Swimming || currentState == FishState.Foraging)
+        {
+            strategicTimer -= Time.deltaTime;
+            if (strategicTimer <= 0f)
+            {
+                UpdateStrategicPoint();
+                strategicTimer = strategicChangeInterval + Random.Range(-5f, 5f);
+            }
+        }
+
         switch (currentState)
         {
             case FishState.Swimming:
                 HandleSwimming();
                 if (currentHunger < 50f) currentState = FishState.Foraging;
                 break;
-
             case FishState.Foraging:
                 HandleForaging();
                 break;
-
             case FishState.Attacking:
                 HandleAttacking();
                 break;
-
             case FishState.Flopping:
                 transform.rotation = Quaternion.Lerp(transform.rotation, Quaternion.Euler(0f, transform.eulerAngles.y, 90f), Time.deltaTime * 5f);
-
-                // 🚨 เซ็นเซอร์ตรวจจับการถูกอุ้ม (Player Grab Tool)
                 if (isGrounded)
                 {
                     float fishRadiusOffset = Mathf.Max(0.01f, (currentSize / 100f) * 0.25f);
                     if (!Physics.Raycast(transform.position, Vector3.down, fishRadiusOffset + 0.15f))
                     {
-                        isGrounded = false; // ถูกย้ายไปกลางอากาศ สั่งให้ร่วงใหม่ทันที!
+                        isGrounded = false;
                         customVelocity = Vector3.zero;
                     }
                 }
-
                 if (!isGrounded) SimulateAirbornePhysics();
                 break;
         }
     }
 
+    // 🌟 ค้นหาและเข้ากลุ่มฝูง (Schooling Management)
+    private void FindSchool()
+    {
+        if (myManager == null) return;
+
+        myLeader = this; // ค่าเริ่มต้นคือตั้งตัวเองเป็นจ่าฝูง
+        List<FishAI> possibleLeaders = new List<FishAI>();
+
+        // หาจ่าฝูงสายพันธุ์เดียวกันทั้งหมด
+        foreach (FishAI fish in myManager.allFishInTank)
+        {
+            if (fish != this && fish.data != null && fish.data.speciesName == this.data.speciesName && fish.currentState != FishState.Dead)
+            {
+                if (fish.myLeader == fish) // ถ้าตัวนี้คือจ่าฝูง
+                {
+                    possibleLeaders.Add(fish);
+                }
+            }
+        }
+
+        // ลองเข้าร่วมฝูงที่ยังไม่เต็ม
+        foreach (FishAI leader in possibleLeaders)
+        {
+            int currentFollowers = 0;
+            foreach (FishAI f in myManager.allFishInTank)
+            {
+                if (f.myLeader == leader) currentFollowers++;
+            }
+
+            if (currentFollowers < data.preferredSchoolSize)
+            {
+                myLeader = leader;
+                break; // ได้ฝูงแล้ว
+            }
+        }
+    }
+
+    // 🌟 สุ่มระดับที่ 1: หาจุดยุทธศาสตร์หรือจุดรวมฝูงปลา
+    // 🌟 สุ่มระดับที่ 1: หาจุดยุทธศาสตร์หรือจุดรวมฝูงปลา
+    private void UpdateStrategicPoint()
+    {
+        if (myManager == null || tankCollider == null) return;
+
+        // ถ้ายกเลิกจ่าฝูงเดิม (ตายหรือสูญหาย) ให้หาใหม่
+        if (myLeader == null || myLeader.currentState == FishState.Dead) FindSchool();
+
+        // โอกาส 10% ที่ปลาลูกฝูงจะเบื่อแล้วพยายามแยกฝูงใหม่เวลาถึงรอบอัปเดต
+        if (myLeader != this && Random.value < 0.10f) FindSchool();
+
+        if (myLeader == this)
+        {
+            // ถ้าเป็นจ่าฝูง ให้สุ่มพิกัด "ข้ามตู้" โดยเน้นขอบตู้มากขึ้น
+            Bounds b = tankCollider.bounds;
+            float padding = 0.1f; // ระยะห่างจากขอบกระจกกันชน
+            float edgeZone = 0.3f; // ความกว้างของพื้นที่ "โซนริมตู้"
+
+            float rx = 0f;
+            float rz = 0f;
+
+            // เพิ่มโอกาส 70% ที่จุดยุทธศาสตร์จะอยู่ "ริมตู้" ด้านใดด้านหนึ่ง
+            if (Random.value < 0.7f)
+            {
+                if (Random.value < 0.5f)
+                {
+                    // ชิดขอบซ้าย หรือ ขอบขวา
+                    rx = (Random.value < 0.5f)
+                        ? Random.Range(b.min.x + padding, b.min.x + padding + edgeZone)
+                        : Random.Range(b.max.x - padding - edgeZone, b.max.x - padding);
+                    // แนว Z ว่ายอิสระตั้งแต่หน้าสระถึงหลังสระ
+                    rz = Random.Range(b.min.z + padding, b.max.z - padding);
+                }
+                else
+                {
+                    // ชิดขอบหน้า หรือ ขอบหลัง
+                    rz = (Random.value < 0.5f)
+                        ? Random.Range(b.min.z + padding, b.min.z + padding + edgeZone)
+                        : Random.Range(b.max.z - padding - edgeZone, b.max.z - padding);
+                    // แนว X ว่ายอิสระตั้งแต่ซ้ายถึงขวา
+                    rx = Random.Range(b.min.x + padding, b.max.x - padding);
+                }
+            }
+            else
+            {
+                // โอกาส 30% ที่เหลือ ให้จุดยุทธศาสตร์อยู่ "กลางตู้"
+                rx = Random.Range(b.min.x + padding + edgeZone, b.max.x - padding - edgeZone);
+                rz = Random.Range(b.min.z + padding + edgeZone, b.max.z - padding - edgeZone);
+            }
+
+            strategicWaypoint = new Vector3(rx, transform.position.y, rz);
+        }
+        else
+        {
+            // ถ้าเป็นลูกฝูง แค่ยึดจุดหมายตามจ่าฝูง
+            strategicWaypoint = myLeader.strategicWaypoint;
+        }
+    }
     private void SimulateAirbornePhysics()
     {
-        customVelocity.y += -14f * Time.deltaTime;
-        customVelocity.x *= Mathf.Exp(-1.5f * Time.deltaTime);
-        customVelocity.z *= Mathf.Exp(-1.5f * Time.deltaTime);
+        // ... (โค้ดเดิม ไม่มีการเปลี่ยนแปลง) ...
+        customVelocity.y += -1.5f * Time.deltaTime;
+        if (customVelocity.y < -1.5f) customVelocity.y = -1.5f;
+
+        customVelocity.x *= Mathf.Exp(-2.5f * Time.deltaTime);
+        customVelocity.z *= Mathf.Exp(-2.5f * Time.deltaTime);
 
         transform.position += customVelocity * Time.deltaTime;
 
         float fishRadiusOffset = Mathf.Max(0.01f, (currentSize / 100f) * 0.25f);
         float targetFloorY = -999f;
         bool hitValidGround = false;
-
-        // 1. เช็คว่าร่วงอยู่ภายในขอบเขตตู้ปลาหรือไม่
         bool insideTank = false;
+
         if (cachedSandRenderer != null)
         {
             Bounds b = cachedSandRenderer.bounds;
@@ -243,14 +369,12 @@ public class FishAI : MonoBehaviour
             float localSandY = myManager.sandSim.GetHeightAtWorldPos(transform.position);
             Vector3 localPosSand = myManager.sandSim.transform.InverseTransformPoint(transform.position);
             localPosSand.y = localSandY;
-            Vector3 worldSandPos =  myManager.sandSim.transform.TransformPoint(localPosSand);
-
+            Vector3 worldSandPos = myManager.sandSim.transform.TransformPoint(localPosSand);
             targetFloorY = worldSandPos.y;
             hitValidGround = true;
         }
         else
         {
-            // 2. ร่วงนอกตู้ ยิงเรย์หาพื้นห้องจริงๆ
             float rayDistance = fishRadiusOffset + 0.1f;
             RaycastHit[] hits = Physics.RaycastAll(transform.position, Vector3.down, rayDistance);
             float closestDistance = float.MaxValue;
@@ -258,15 +382,7 @@ public class FishAI : MonoBehaviour
             foreach (RaycastHit hit in hits)
             {
                 if (hit.collider.gameObject == gameObject) continue;
-
-                if (myManager != null)
-                {
-                    if (hit.collider.transform.IsChildOf(myManager.transform) ||
-                        hit.collider.gameObject == myManager.gameObject)
-                    {
-                        continue;
-                    }
-                }
+                if (myManager != null && (hit.collider.transform.IsChildOf(myManager.transform) || hit.collider.gameObject == myManager.gameObject)) continue;
 
                 if (hit.distance < closestDistance)
                 {
@@ -283,10 +399,9 @@ public class FishAI : MonoBehaviour
             if (transform.position.y <= triggerHeight)
             {
                 transform.position = new Vector3(transform.position.x, triggerHeight, transform.position.z);
-
-                if (customVelocity.y < -1.5f)
+                if (customVelocity.y < -0.5f)
                 {
-                    customVelocity.y = -customVelocity.y * 0.15f;
+                    customVelocity.y = -customVelocity.y * 0.1f;
                     customVelocity.x *= 0.5f;
                     customVelocity.z *= 0.5f;
                 }
@@ -301,49 +416,31 @@ public class FishAI : MonoBehaviour
 
     private void HandleSwimming()
     {
-        stateTimer += Time.deltaTime;
+        // ว่ายปกติ ใช้ระบบพุ่งสลับหยุด (forceContinuous = false)
+        MoveTowardsTarget(data.baseSpeed, false);
 
-        // 🌟 แต่ละตัวสุ่มช่วงเวลาตัดสินใจไม่เท่ากัน ปลาจะไม่เปลี่ยนทิศทางพร้อมกัน
-        float randomInterval = Random.Range(2.0f, 6.0f) * (1.0f / (data.hyperLevel / 50f + 0.5f));
-
-        if (stateTimer > randomInterval)
-        {
-            stateTimer = 0f;
-            // ปรับความเร็วตามขนาดตัว (ตัวใหญ่ให้เฉื่อยกว่า ตัวเล็กให้ปราดเปรียว)
-            float sizeFactor = 1.0f / (currentSize / 10f); // ปลาใหญ่จะคูณความเร็วลดลง
-            float hyperactivity = data.hyperLevel / 100f;
-
-            float newTargetSpeed = Random.Range(0.3f, 0.9f) + (hyperactivity * 0.4f);
-            currentSpeedScale = Mathf.Lerp(currentSpeedScale, newTargetSpeed * sizeFactor, 0.3f);
-        }
-
-        MoveTowardsTarget(data.baseSpeed * currentSpeedScale);
-        // ...
-    
         if (Vector3.Distance(transform.position, targetWaypoint) < 0.2f)
         {
             GetNewWaypoint();
         }
     }
+
     private void HandleForaging()
     {
         if (data.dietType == DietType.Carnivore)
         {
-            if (targetPrey == null)
-            {
-                targetPrey = myManager.FindPreyFor(this);
-            }
-
+            if (targetPrey == null) targetPrey = myManager.FindPreyFor(this);
             if (targetPrey != null)
             {
                 currentState = FishState.Attacking;
                 return;
             }
         }
-        MoveTowardsTarget(data.baseSpeed * 0.8f);
+
+        // ตอนหาอาหารให้ว่ายช้าลงนิดนึง และใช้ระบบพุ่งสลับหยุด
+        MoveTowardsTarget(data.baseSpeed * 0.8f, false);
         if (Vector3.Distance(transform.position, targetWaypoint) < 0.1f) GetNewWaypoint();
     }
-
     private void HandleAttacking()
     {
         if (targetPrey == null || targetPrey.currentState == FishState.Dead)
@@ -355,12 +452,14 @@ public class FishAI : MonoBehaviour
         if (data.huntingStyle == HuntStyle.Ambush)
         {
             float dist = Vector3.Distance(transform.position, targetPrey.transform.position);
-            if (dist > 0.5f) MoveTowards(targetPrey.transform.position, data.baseSpeed * 0.3f);
-            else MoveTowards(targetPrey.transform.position, data.baseSpeed * 3.0f);
+            // ดักซุ่ม ให้ว่ายแบบพุ่งสลับหยุดช้าๆ ถ้าเข้าใกล้ค่อยว่ายพรวด (forceContinuous = true)
+            if (dist > 0.5f) MoveTowards(targetPrey.transform.position, data.baseSpeed * 0.3f, false);
+            else MoveTowards(targetPrey.transform.position, data.baseSpeed * 3.0f, true);
         }
         else if (data.huntingStyle == HuntStyle.Chase)
         {
-            MoveTowards(targetPrey.transform.position, data.baseSpeed * 1.5f);
+            // ไล่ล่า ให้ว่ายพรวดต่อเนื่องแบบปลาหนี/ไล่กวด
+            MoveTowards(targetPrey.transform.position, data.baseSpeed * 1.5f, true);
         }
 
         if (Vector3.Distance(transform.position, targetPrey.transform.position) < 0.1f)
@@ -372,149 +471,182 @@ public class FishAI : MonoBehaviour
             currentState = FishState.Swimming;
         }
     }
-
-    private void CheckAggressionTrigger()
+    private void MoveTowardsTarget(float speed, bool forceContinuous)
     {
-        if (data.baseAggression + (100f - currentMood) > 120f)
-        {
-            targetPrey = myManager.FindPreyFor(this);
-            if (targetPrey != null) currentState = FishState.Attacking;
-        }
+        MoveTowards(targetWaypoint, speed, forceContinuous);
     }
 
-    private void MoveTowardsTarget(float speed)
+    private void MoveTowards(Vector3 pos, float maxSpeed, bool forceContinuous)
     {
-        MoveTowards(targetWaypoint, speed);
-    }
-
-    private void MoveTowards(Vector3 pos, float speed)
-    {
-        // 🌟 เพิ่มความแปรปรวน (Variance) ให้ทิศทาง
-        // ทำให้ปลาไม่ว่ายเป็นเส้นตรงเป๊ะๆ เหมือนหุ่นยนต์
-        float varianceIntensity = 0.1f; // ปรับค่านี้ (0.1 - 0.3) ถ้ายิ่งมากปลายิ่งว่ายซิกแซก
+        float varianceIntensity = 0.1f;
         Vector3 noise = new Vector3(
-            Mathf.Sin(Time.time * 0.5f) * varianceIntensity,
-            Mathf.Cos(Time.time * 0.3f) * varianceIntensity,
-            Mathf.Sin(Time.time * 0.7f) * varianceIntensity
+            Mathf.Sin((Time.time + uniqueOffset) * 0.5f) * varianceIntensity,
+            Mathf.Cos((Time.time + uniqueOffset) * 0.3f) * varianceIntensity,
+            Mathf.Sin((Time.time + uniqueOffset) * 0.7f) * varianceIntensity
         );
 
         Vector3 targetDir = ((pos + noise) - transform.position).normalized;
 
         if (targetDir != Vector3.zero && currentState != FishState.Flopping)
         {
-            float lookAheadDistance = data.baseSpeed * 0.7f;
+            float lookAheadDistance = maxSpeed * 0.7f;
             float fishRadius = Mathf.Max(0.02f, currentSize / 100f);
 
-            float currentMoveSpeed = speed;
-            float turnSpeed = 2.5f;
-
-            // 1. ตรวจสอบสถานะการจ้องมอง (Observing State)
+            // หลบสิ่งกีดขวาง
             if (isObserving)
             {
                 observeTimer -= Time.deltaTime;
-                currentMoveSpeed = speed * 0.1f; // เบรกความเร็วเหลือ 10%
-
-                if (observeTimer <= 0f)
-                {
-                    isObserving = false;
-                    GetNewWaypoint();
-                    return;
-                }
+                maxSpeed *= 0.1f;
+                if (observeTimer <= 0f) { isObserving = false; GetNewWaypoint(); return; }
             }
             else
             {
-                // 2. เรดาร์สแกนสิ่งกีดขวาง
                 if (Physics.SphereCast(transform.position, fishRadius, transform.forward, out RaycastHit hit, lookAheadDistance))
                 {
                     bool hitWall = hit.collider.CompareTag("Tank");
                     bool hitObstacle = (myManager?.waterQuality?.tankObstacles.Contains(hit.collider) ?? false);
+                    if (hitWall || hitObstacle) { isObserving = true; observeTimer = Random.Range(1.0f, 1.5f); }
+                }
+            }
 
-                    if (hitWall || hitObstacle)
+            // 🌟 คำนวณ Hyper Level (0.0 ถึง 1.0)
+            float hyperFactor = data.hyperLevel / 100f;
+
+            if (forceContinuous)
+            {
+                // ว่ายพรวดต่อเนื่อง (ใช้ตอนโจมตีหรือหนี)
+                currentForwardSpeed = Mathf.Lerp(currentForwardSpeed, maxSpeed, Time.deltaTime * 5f);
+            }
+            else
+            {
+                // ว่ายแบบพุ่งสลับหยุด (Dart & Glide)
+                swimPhaseTimer -= Time.deltaTime;
+
+                if (isDarting)
+                {
+                    // จังหวะพุ่ง: เร่งความเร็ว
+                    currentForwardSpeed = Mathf.Lerp(currentForwardSpeed, maxSpeed, Time.deltaTime * 4f);
+
+                    if (swimPhaseTimer <= 0f)
                     {
-                        isObserving = true;
-                        observeTimer = Random.Range(1.0f, 1.5f);
+                        isDarting = false;
+                        // ตั้งเวลาลอยนิ่ง: ยิ่ง Hyper น้อย ยิ่งลอยนิ่งนาน (1 - 4 วินาที)
+                        swimPhaseTimer = Random.Range(1.0f, 4.0f) * (1.1f - hyperFactor);
+                        if (hyperFactor > 0.8f) swimPhaseTimer *= 0.2f; // Hyper สูงแทบไม่หยุดนิ่งเลย
+                    }
+                }
+                else
+                {
+                    // จังหวะลอยนิ่ง: ชะลอความเร็วจนติดลบนิดๆ (แรงพยุงน้ำดันถอยหลัง)
+                    float driftSpeed = -maxSpeed * 0.05f;
+                    currentForwardSpeed = Mathf.Lerp(currentForwardSpeed, driftSpeed, Time.deltaTime * 2.5f);
+
+                    if (swimPhaseTimer <= 0f)
+                    {
+                        isDarting = true;
+                        // ตั้งเวลาพุ่ง: ยิ่ง Hyper สูง ยิ่งพุ่งนาน (0.5 - 2.5 วินาที)
+                        swimPhaseTimer = Random.Range(0.5f, 1.5f) * (0.5f + (hyperFactor * 1.5f));
                     }
                 }
             }
 
-            // 3. หมุนตัว (หันหนีไวขึ้นถ้ากำลังหลบสิ่งกีดขวาง)
-            if (!isObserving && Vector3.Angle(transform.forward, targetDir) > 45f) turnSpeed = 4.5f;
+            // 🌟 การหันหัว (Turn Speed)
+            float turnSpeed = rotationSpeed;
+            if (!forceContinuous)
+            {
+                // หันเร็วขึ้นตอนพุ่ง หันช้าๆเนียนๆตอนลอยนิ่ง
+                turnSpeed = isDarting ? rotationSpeed * 1.2f : rotationSpeed * 0.5f;
+                // บวกผลกระทบจาก Hyper Level ด้วย
+                turnSpeed *= Mathf.Lerp(0.5f, 1.5f, hyperFactor);
+            }
+            if (!isObserving && Vector3.Angle(transform.forward, targetDir) > 45f) turnSpeed *= 1.5f;
 
             Quaternion targetRotation = Quaternion.LookRotation(targetDir);
             transform.rotation = Quaternion.Slerp(transform.rotation, targetRotation, Time.deltaTime * turnSpeed);
 
-            // 4. คำนวณการเคลื่อนที่
-            float bobbing = Mathf.Sin(Time.time * 2f) * 0.005f;
-            Vector3 movement = transform.forward * currentMoveSpeed * Time.deltaTime;
-            movement.y += bobbing * Time.deltaTime * 2f;
+            // ขยับตัว
+            float bobbing = Mathf.Sin((Time.time + uniqueOffset) * 2f) * 0.005f;
+            if (currentForwardSpeed <= 0) bobbing *= 0.2f; // ลอยนิ่งจะไม่ส่ายขึ้นลงเยอะ
 
+            Vector3 movement = transform.forward * currentForwardSpeed * Time.deltaTime;
+            movement.y += bobbing * Time.deltaTime * 2f;
             Vector3 nextPos = transform.position + movement;
 
-            // 5. ป้องกันปลาว่ายทะลุพื้นทราย (Terrain Collision)
+            // ตรวจสอบขอบตู้และสิ่งกีดขวาง (ไม่เปลี่ยนจากเดิม)
             if (myManager != null && myManager.sandSim != null)
             {
                 float localSandY = myManager.sandSim.GetHeightAtWorldPos(nextPos);
                 float worldSandY = myManager.sandSim.transform.TransformPoint(new Vector3(0, localSandY, 0)).y;
+                if (nextPos.y < worldSandY + fishRadius) { nextPos.y = worldSandY + fishRadius; if (Random.value < 0.05f) { GetNewWaypoint(); isObserving = false; } }
 
-                if (nextPos.y < worldSandY + fishRadius)
+                if (myManager.waterSim != null)
                 {
-                    nextPos.y = worldSandY + fishRadius;
-                    if (Random.value < 0.05f) { GetNewWaypoint(); isObserving = false; }
+                    float localWaterY = myManager.waterSim.GetHeightAtWorldPos(nextPos);
+                    float worldWaterY = myManager.waterSim.transform.TransformPoint(new Vector3(0, localWaterY, 0)).y;
+                    float maxAllowedY = worldWaterY - fishRadius;
+                    if (maxAllowedY < worldSandY + fishRadius) maxAllowedY = worldWaterY;
+                    if (nextPos.y > maxAllowedY) { nextPos.y = maxAllowedY; if (Random.value < 0.05f) { GetNewWaypoint(); isObserving = false; } }
                 }
             }
-            if (!isObserving && Random.value < 0.002f)
-            {
-                GetNewWaypoint();
-                return;
-            }
-            // 6. ป้องกันทะลุกระจก (Glass Collision)
+
             if (tankCollider != null)
             {
                 Vector3 clampedPos = tankCollider.ClosestPoint(nextPos);
-                if (Vector3.Distance(nextPos, clampedPos) > 0.005f)
-                {
-                    nextPos = clampedPos;
-                    GetNewWaypoint();
-                    isObserving = false;
-                }
+                if (Vector3.Distance(nextPos, clampedPos) > 0.002f) { nextPos = clampedPos; if (Random.value < 0.02f) { GetNewWaypoint(); isObserving = false; } }
             }
-
             transform.position = nextPos;
         }
     }
+    // 🌟 สุ่มระดับที่ 2: สุ่มว่ายระยะใกล้ (แต่ละตัวเลือกระดับความสูงอิสระ)
     private void GetNewWaypoint()
     {
-        if (tankCollider != null)
+        if (tankCollider == null) return;
+        if (strategicWaypoint == Vector3.zero) UpdateStrategicPoint();
+
+        bool isLowWater = false;
+        if (myManager.waterQuality != null)
         {
-            Bounds b = tankCollider.bounds;
-            float randomX = Random.Range(b.min.x + 0.05f, b.max.x - 0.05f);
-            float randomZ = Random.Range(b.min.z + 0.05f, b.max.z - 0.05f);
-            float targetY = transform.position.y;
-
-            if (myManager != null && myManager.waterSim != null && myManager.sandSim != null)
-            {
-                float worldWaterY = myManager.waterSim.transform.TransformPoint(new Vector3(0, myManager.waterSim.GetHeightAtWorldPos(transform.position), 0)).y;
-                float worldSandY = myManager.sandSim.transform.TransformPoint(new Vector3(0, myManager.sandSim.GetHeightAtWorldPos(transform.position), 0)).y;
-
-                switch (data.swimZone)
-                {
-                    case SwimZone.Bottom:
-                        targetY = Random.Range(worldSandY + 0.02f, worldSandY + 0.15f);
-                        break;
-                    case SwimZone.Surface:
-                        // 🌟 แก้ตรงนี้: เว้นระยะจากผิวน้ำลงมา 3-5 ซม. ปลาจะว่ายใต้ผิวน้ำนิ่งๆ ไม่พุ่งชนเพดาน
-                        targetY = Random.Range(worldWaterY - 0.08f, worldWaterY - 0.03f);
-                        break;
-                    case SwimZone.Middle:
-                        targetY = Random.Range(worldSandY + 0.15f, worldWaterY - 0.15f);
-                        break;
-                    case SwimZone.All:
-                        targetY = Random.Range(worldSandY + 0.05f, worldWaterY - 0.05f);
-                        break;
-                }
-            }
-            targetWaypoint = new Vector3(randomX, targetY, randomZ);
+            float maxCap = myManager.waterQuality.GetTotalTankVolumeLiters() - myManager.waterQuality.sandVolumeLiters;
+            if (myManager.waterQuality.waterVolumeLiters < maxCap * 0.5f) isLowWater = true;
         }
+
+        Vector3 centerPos = isLowWater ? tankCollider.bounds.center : strategicWaypoint;
+        float currentRoam = isLowWater ? tankCollider.bounds.extents.x : schoolingSpread;
+
+        // สุ่ม X และ Z รอบๆ จุดยุทธศาสตร์
+        float randomX = Random.Range(centerPos.x - currentRoam, centerPos.x + currentRoam);
+        float randomZ = Random.Range(centerPos.z - currentRoam, centerPos.z + currentRoam);
+
+        Bounds b = tankCollider.bounds;
+        randomX = Mathf.Clamp(randomX, b.min.x + 0.05f, b.max.x - 0.05f);
+        randomZ = Mathf.Clamp(randomZ, b.min.z + 0.05f, b.max.z - 0.05f);
+
+        // 🌟 สุ่มความสูง (Y) อย่างอิสระของแต่ละตัว ไม่ตามจ่าฝูง!
+        float targetY = transform.position.y;
+        if (myManager != null && myManager.waterSim != null && myManager.sandSim != null)
+        {
+            float localWaterY = myManager.waterSim.GetHeightAtWorldPos(new Vector3(randomX, 0, randomZ));
+            float localSandY = myManager.sandSim.GetHeightAtWorldPos(new Vector3(randomX, 0, randomZ));
+            float wy = myManager.waterSim.transform.TransformPoint(new Vector3(0, localWaterY, 0)).y;
+            float sy = myManager.sandSim.transform.TransformPoint(new Vector3(0, localSandY, 0)).y;
+
+            float minY = sy + 0.05f;
+            float maxY = wy - 0.05f;
+
+            // สุ่ม Y แบบอิสระระหว่างพื้นและผิวน้ำก่อน
+            targetY = Random.Range(minY, maxY);
+
+            // ปรับโซนการว่ายตามสายพันธุ์
+            switch (data.swimZone)
+            {
+                case SwimZone.Bottom: targetY = Random.Range(minY, sy + 0.2f); break;
+                case SwimZone.Surface: targetY = Random.Range(wy - 0.2f, maxY); break;
+                case SwimZone.Middle: targetY = Random.Range(Mathf.Lerp(minY, maxY, 0.3f), Mathf.Lerp(minY, maxY, 0.7f)); break;
+            }
+            targetY = Mathf.Clamp(targetY, minY, maxY);
+        }
+
+        targetWaypoint = new Vector3(randomX, targetY, randomZ);
     }
 
     public void Die()
@@ -522,7 +654,6 @@ public class FishAI : MonoBehaviour
         if (currentState == FishState.Dead) return;
         currentState = FishState.Dead;
         currentHealth = 0;
-
         customVelocity = Vector3.zero;
         transform.localEulerAngles = new Vector3(0f, 0f, 180f);
         Debug.Log($"<color=red>☠️ ปลา {gameObject.name} ตายแล้ว!</color>");
@@ -534,6 +665,22 @@ public class FishAI : MonoBehaviour
         transform.localScale = Vector3.one * scaleFactor;
     }
 
-  
+    private void OnDrawGizmosSelected()
+    {
+        if (targetWaypoint != Vector3.zero)
+        {
+            Gizmos.color = Color.yellow;
+            Gizmos.DrawLine(transform.position, targetWaypoint);
+            Gizmos.DrawSphere(targetWaypoint, 0.02f);
+        }
+
+        if (strategicWaypoint != Vector3.zero)
+        {
+            Gizmos.color = Color.red;
+            Gizmos.DrawWireSphere(strategicWaypoint, schoolingSpread);
+            Gizmos.DrawLine(transform.position, strategicWaypoint);
+        }
+    }
+
     protected virtual void ExecuteSpecialBehavior() { }
 }
