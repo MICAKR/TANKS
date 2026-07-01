@@ -15,10 +15,10 @@ MonoBehaviour:
   speciesName: Tiger
   adultSize: 4
   daysToMature: 120
-  baseSpeed: 0.013
+  baseSpeed: 0.1
   attackPower: 12
-  hyperLevel: 0
-  baseAggression: 65
+  hyperLevel: 19.9
+  baseAggression: 65.3
   preferredSchoolSize: 6
   dietType: 1
   huntingStyle: 1

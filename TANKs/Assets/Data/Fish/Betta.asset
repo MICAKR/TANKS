@@ -15,7 +15,7 @@ MonoBehaviour:
   speciesName: Betta
   adultSize: 7
   daysToMature: 120
-  baseSpeed: 0.012
+  baseSpeed: 0.1
   attackPower: 25
   hyperLevel: 0
   baseAggression: 90
