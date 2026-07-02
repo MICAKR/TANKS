@@ -163,17 +163,25 @@ MonoBehaviour:
   currentMood: 100
   ageDays: 0
   currentSize: 0
+  targetReachDistance: 0.15
+  maxWaypointTime: 5
   moistureLossRate: 2
-  stateChangeDelay: 0.3
+  stateChangeDelay: 4.74
   baseWaterBuffer: 0.01
   sizeDepthMultiplier: 0.2
-  strategicChangeInterval: 20
-  roamRadius: 0.4
-  strategicWaypoint: {x: 0, y: 0, z: 0}
   myLeader: {fileID: 0}
-  tankCollider: {fileID: 0}
+  isLeader: 0
+  waypointInterval: 8
+  separationDistance: 0.09
+  separationPower: 2
+  edgePadding: 0.15
+  schoolingSpread: 0
+  separationRadius: 5
+  separationStrength: 1
+  interSchoolRepulsion: 10
   rotationSpeed: 2
-  schoolingSpread: 0.5
+  tankCollider: {fileID: 0}
+  wallBufferMultiplier: 0.8
 --- !u!1001 &4832234479566542315
 PrefabInstance:
   m_ObjectHideFlags: 0
@@ -237,6 +245,10 @@ PrefabInstance:
     - target: {fileID: 919132149155446097, guid: 4264bb9ea6cdc92418c3e29d1e4e4cd2, type: 3}
       propertyPath: m_Name
       value: 001Neon
+      objectReference: {fileID: 0}
+    - target: {fileID: 919132149155446097, guid: 4264bb9ea6cdc92418c3e29d1e4e4cd2, type: 3}
+      propertyPath: m_IsActive
+      value: 1
       objectReference: {fileID: 0}
     m_RemovedComponents: []
     m_RemovedGameObjects: []
